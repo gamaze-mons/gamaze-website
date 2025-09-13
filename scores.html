@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Scores - Gamez</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="scores-page">
+    <!-- Header -->
+    <header class="scores-header">
+        <div class="header-content">
+            <a href="index.html" class="back-btn">
+                <i class="fas fa-arrow-left"></i>
+                Back to Home
+            </a>
+            <div class="event-title">
+                <h1>Live Event Scores</h1>
+                <div class="live-indicator">
+                    <span class="pulse"></span>
+                    LIVE
+                </div>
+            </div>
+            <div class="controls">
+                <button id="playPauseBtn" class="control-btn">
+                    <i class="fas fa-pause"></i>
+                </button>
+                <button id="fullscreenBtn" class="control-btn">
+                    <i class="fas fa-expand"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Slideshow Container -->
+    <div class="slideshow-container">
+        <!-- Loading State -->
+        <div class="loading-state" id="loadingState">
+            <div class="loader"></div>
+            <p>Loading scores...</p>
+        </div>
+
+        <!-- Slides will be dynamically inserted here -->
+        <div class="slides-wrapper" id="slidesWrapper">
+            <!-- Sample Slide (will be replaced with dynamic content) -->
+            <div class="slide active">
+                <div class="participant-card">
+                    <div class="rank-badge">#1</div>
+                    <div class="participant-photo">
+                        <img src="https://via.placeholder.com/200" alt="Participant">
+                        <div class="photo-ring"></div>
+                    </div>
+                    <h2 class="participant-name">John Doe</h2>
+                    <div class="score-display">
+                        <span class="score-label">Score</span>
+                        <span class="score-value" data-score="850">850</span>
+                        <span class="score-points">points</span>
+                    </div>
+                    <div class="score-bar">
+                        <div class="score-progress" style="width: 85%"></div>
+                    </div>
+                    <div class="achievement-badges">
+                        <span class="badge"><i class="fas fa-star"></i> Top Performer</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sample Slide 2 -->
+            <div class="slide">
+                <div class="participant-card">
+                    <div class="rank-badge">#2</div>
+                    <div class="participant-photo">
+                        <img src="https://via.placeholder.com/200" alt="Participant">
+                        <div class="photo-ring"></div>
+                    </div>
+                    <h2 class="participant-name">Jane Smith</h2>
+                    <div class="score-display">
+                        <span class="score-label">Score</span>
+                        <span class="score-value" data-score="720">720</span>
+                        <span class="score-points">points</span>
+                    </div>
+                    <div class="score-bar">
+                        <div class="score-progress" style="width: 72%"></div>
+                    </div>
+                    <div class="achievement-badges">
+                        <span class="badge"><i class="fas fa-fire"></i> On Fire</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sample Slide 3 -->
+            <div class="slide">
+                <div class="participant-card">
+                    <div class="rank-badge">#3</div>
+                    <div class="participant-photo">
+                        <img src="https://via.placeholder.com/200" alt="Participant">
+                        <div class="photo-ring"></div>
+                    </div>
+                    <h2 class="participant-name">Mike Johnson</h2>
+                    <div class="score-display">
+                        <span class="score-label">Score</span>
+                        <span class="score-value" data-score="650">650</span>
+                        <span class="score-points">points</span>
+                    </div>
+                    <div class="score-bar">
+                        <div class="score-progress" style="width: 65%"></div>
+                    </div>
+                    <div class="achievement-badges">
+                        <span class="badge"><i class="fas fa-medal"></i> Rising Star</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Dots -->
+        <div class="dots-container" id="dotsContainer">
+            <span class="dot active" data-slide="0"></span>
+            <span class="dot" data-slide="1"></span>
+            <span class="dot" data-slide="2"></span>
+        </div>
+
+        <!-- Manual Navigation -->
+        <button class="nav-btn prev" id="prevBtn">
+            <i class="fas fa-chevron-left"></i>
+        </button>
+        <button class="nav-btn next" id="nextBtn">
+            <i class="fas fa-chevron-right"></i>
+        </button>
+    </div>
+
+    <!-- Leaderboard Summary -->
+    <div class="leaderboard-summary" id="leaderboardSummary">
+        <h3>Quick Leaderboard</h3>
+        <div class="leaderboard-list">
+            <div class="leaderboard-item">
+                <span class="rank">1</span>
+                <span class="name">John Doe</span>
+                <span class="score">850</span>
+            </div>
+            <div class="leaderboard-item">
+                <span class="rank">2</span>
+                <span class="name">Jane Smith</span>
+                <span class="score">720</span>
+            </div>
+            <div class="leaderboard-item">
+                <span class="rank">3</span>
+                <span class="name">Mike Johnson</span>
+                <span class="score">650</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+        <button class="settings-toggle" id="settingsToggle">
+            <i class="fas fa-cog"></i>
+        </button>
+        <div class="settings-content">
+            <h3>Display Settings</h3>
+            <div class="setting-item">
+                <label>Slide Duration</label>
+                <input type="range" id="slideDuration" min="3" max="10" value="5">
+                <span id="durationValue">5s</span>
+            </div>
+            <div class="setting-item">
+                <label>Animation Speed</label>
+                <select id="animationSpeed">
+                    <option value="slow">Slow</option>
+                    <option value="normal" selected>Normal</option>
+                    <option value="fast">Fast</option>
+                </select>
+            </div>
+            <div class="setting-item">
+                <label>Show Leaderboard</label>
+                <input type="checkbox" id="showLeaderboard" checked>
+            </div>
+            <div class="setting-item">
+                <button id="refreshData" class="btn-refresh">
+                    <i class="fas fa-sync"></i> Refresh Data
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/scores.js"></script>
+</body>
+</html>
