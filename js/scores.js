@@ -1,198 +1,350 @@
-// ===== Scores Display System =====
+// ===== GAMAZE Scores Display System =====
 
 // Configuration
 const config = {
+    spreadsheetId: '1C-07WttxU_PgzzobzYYjtwgYqOT3MIetkAsraShi5Us',
+    participantsSheet: 'Participants',
+    gamesListSheet: 'GamesList', // Sheet containing list of game names
+    gameSheets: [], // Will be populated dynamically
     slideDuration: 5000, // 5 seconds per slide
     animationSpeed: 500,
-    googleSheetsApiKey: 'YOUR_API_KEY_HERE', // Replace with actual API key
-    spreadsheetId: 'YOUR_SPREADSHEET_ID_HERE', // Replace with actual spreadsheet ID
-    sheetName: 'Sheet1',
+    participantsPerSlide: 8,
     refreshInterval: 30000 // Refresh data every 30 seconds
 };
+
+// Color palette for game themes (matches CSS game-color classes)
+const gameColors = [
+    '6B46C1', // purple (game-color-0)
+    'E53E3E', // red (game-color-1)
+    '38A169', // green (game-color-2)
+    'D69E2E', // yellow (game-color-3)
+    '3182CE', // blue (game-color-4)
+    'DD6B20'  // orange (game-color-5)
+];
 
 // State management
 let currentSlide = 0;
 let slides = [];
 let isPlaying = true;
 let slideInterval;
-let participantsData = [];
+let participantsData = {}; // Map of name -> photo URL
+let gamesData = []; // Array of { gameName, participants: [{name, score, photo}] }
 
 // ===== Initialize Application =====
 document.addEventListener('DOMContentLoaded', function() {
     initializeControls();
     initializeSettings();
-    loadSampleData(); // Load sample data initially
-    startSlideshow();
-    
-    // Comment out for now - will be activated when Google Sheets is configured
-    // loadGoogleSheetsData();
-    // setInterval(loadGoogleSheetsData, config.refreshInterval);
+    showLoading(true);
+    loadAllData();
+
+    // Auto-refresh data
+    setInterval(loadAllData, config.refreshInterval);
 });
 
-// ===== Sample Data (Replace with Google Sheets data) =====
-function loadSampleData() {
-    participantsData = [
-        {
-            name: 'John Doe',
-            photo: 'https://via.placeholder.com/200',
-            score: 850,
-            rank: 1,
-            badge: 'Top Performer'
-        },
-        {
-            name: 'Jane Smith',
-            photo: 'https://via.placeholder.com/200',
-            score: 720,
-            rank: 2,
-            badge: 'On Fire'
-        },
-        {
-            name: 'Mike Johnson',
-            photo: 'https://via.placeholder.com/200',
-            score: 650,
-            rank: 3,
-            badge: 'Rising Star'
-        },
-        {
-            name: 'Sarah Williams',
-            photo: 'https://via.placeholder.com/200',
-            score: 580,
-            rank: 4,
-            badge: 'Consistent Player'
-        },
-        {
-            name: 'David Brown',
-            photo: 'https://via.placeholder.com/200',
-            score: 520,
-            rank: 5,
-            badge: 'Team Player'
-        }
-    ];
-    
-    createSlides();
-    updateLeaderboard();
-}
+// ===== Google Sheets Data Fetching =====
 
-// ===== Google Sheets Integration =====
-async function loadGoogleSheetsData() {
+// Fetch data from a specific sheet using Google Visualization API
+async function fetchSheetData(sheetName) {
+    const url = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+
     try {
-        // Hide loading state
-        document.getElementById('loadingState').classList.remove('show');
-        
-        // Construct the API URL
-        const range = `${config.sheetName}!A:C`; // Columns A (Name), B (Photo URL), C (Score)
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${range}?key=${config.googleSheetsApiKey}`;
-        
         const response = await fetch(url);
-        
-        if (!response.ok) {
-            throw new Error('Failed to fetch data from Google Sheets');
-        }
-        
-        const data = await response.json();
-        
-        if (data.values && data.values.length > 1) {
-            // Skip header row and process data
-            participantsData = data.values.slice(1).map((row, index) => ({
-                name: row[0] || 'Unknown',
-                photo: row[1] || 'https://via.placeholder.com/200',
-                score: parseInt(row[2]) || 0,
-                rank: 0, // Will be calculated
-                badge: '' // Will be assigned
-            }));
-            
-            // Sort by score and assign ranks
-            participantsData.sort((a, b) => b.score - a.score);
-            participantsData.forEach((participant, index) => {
-                participant.rank = index + 1;
-                participant.badge = getBadgeForRank(index + 1);
+        const text = await response.text();
+
+        // Parse the JSONP response (remove the wrapper)
+        const jsonStart = text.indexOf('{');
+        const jsonEnd = text.lastIndexOf('}');
+        const jsonString = text.substring(jsonStart, jsonEnd + 1);
+        const data = JSON.parse(jsonString);
+
+        if (data.table && data.table.rows) {
+            // Get headers - use label, or id, or index as fallback
+            let headers = data.table.cols.map((col, idx) => col.label || col.id || `col${idx}`);
+            let rows = data.table.rows.map(row => {
+                return row.c.map(cell => cell ? (cell.v !== null ? cell.v : '') : '');
             });
-            
-            createSlides();
-            updateLeaderboard();
+
+            // Check if first row looks like headers (contains common header names)
+            if (rows.length > 0) {
+                const firstRow = rows[0];
+                const headerKeywords = ['name', 'photo', 'score', 'date', 'time', 'participant', 'url'];
+                const looksLikeHeaders = firstRow.some(cell =>
+                    typeof cell === 'string' && headerKeywords.some(kw => cell.toLowerCase().includes(kw))
+                );
+
+                if (looksLikeHeaders) {
+                    // Use first row as headers and skip it from data
+                    headers = firstRow.map(h => String(h));
+                    rows = rows.slice(1);
+                    console.log('Using first row as headers:', headers);
+                }
+            }
+
+            return { headers, rows };
         }
+        return { headers: [], rows: [] };
     } catch (error) {
-        console.error('Error loading Google Sheets data:', error);
-        // Fall back to sample data if there's an error
-        if (participantsData.length === 0) {
-            loadSampleData();
-        }
+        console.error(`Error fetching sheet "${sheetName}":`, error);
+        return { headers: [], rows: [] };
     }
 }
 
-// ===== Helper Functions =====
-function getBadgeForRank(rank) {
-    const badges = {
-        1: 'Top Performer',
-        2: 'On Fire',
-        3: 'Rising Star',
-        4: 'Consistent Player',
-        5: 'Team Player'
-    };
-    return badges[rank] || 'Participant';
+// Load participants data (name -> photo mapping)
+async function loadParticipants() {
+    const data = await fetchSheetData(config.participantsSheet);
+    participantsData = {};
+
+    console.log('Participants sheet headers:', data.headers);
+    console.log('Participants sheet rows:', data.rows.length);
+
+    if (data.rows.length > 0) {
+        // Find column indices
+        const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
+        const photoIdx = findColumnIndex(data.headers, ['PhotoUrl', 'Photo URL', 'Photo', 'URL', 'PhotoURL']);
+
+        console.log('Name column index:', nameIdx, 'Photo column index:', photoIdx);
+
+        data.rows.forEach(row => {
+            const name = row[nameIdx] || '';
+            let photo = row[photoIdx] || '';
+
+            // Convert Google Drive links to direct image URLs
+            if (photo && photo.includes('drive.google.com')) {
+                const fileIdMatch = photo.match(/\/d\/([a-zA-Z0-9_-]+)/);
+                if (fileIdMatch) {
+                    // Use lh3.googleusercontent.com for reliable image loading
+                    photo = `https://lh3.googleusercontent.com/d/${fileIdMatch[1]}=s200`;
+                }
+            }
+
+            if (name) {
+                participantsData[name.toLowerCase().trim()] = photo;
+                console.log('Participant:', name, '-> Photo:', photo ? 'Yes' : 'No');
+            }
+        });
+    }
+
+    console.log('Loaded participants:', Object.keys(participantsData).length);
 }
 
-function getBadgeIcon(badge) {
-    const icons = {
-        'Top Performer': 'fas fa-star',
-        'On Fire': 'fas fa-fire',
-        'Rising Star': 'fas fa-medal',
-        'Consistent Player': 'fas fa-award',
-        'Team Player': 'fas fa-users',
-        'Participant': 'fas fa-user'
-    };
-    return icons[badge] || 'fas fa-user';
+// Load all game data
+async function loadGameData() {
+    gamesData = [];
+
+    console.log('Available participant photos:', Object.keys(participantsData));
+
+    let gameIndex = 0;
+    for (const gameName of config.gameSheets) {
+        const { data, actualName } = await fetchSheetDataFlexible(gameName);
+        const colorIndex = gameIndex % 6; // Calculate color index for this game
+        const themeColor = gameColors[colorIndex];
+
+        console.log(`Game "${actualName}" - headers:`, data.headers, 'rows:', data.rows.length);
+
+        if (data.rows.length > 0) {
+            const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
+            const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points']);
+
+            const participants = data.rows
+                .map(row => {
+                    const name = row[nameIdx] || '';
+                    const score = parseInt(row[scoreIdx]) || 0;
+                    const photoKey = name.toLowerCase().trim();
+                    const photo = participantsData[photoKey];
+
+                    console.log(`Looking up "${name}" -> key "${photoKey}" -> found: ${photo ? 'YES' : 'NO'}`);
+
+                    const finalPhoto = photo || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(name) + '&background=' + themeColor + '&color=fff&size=80';
+
+                    return { name, score, photo: finalPhoto };
+                })
+                .filter(p => p.name) // Remove empty rows
+                .sort((a, b) => b.score - a.score); // Sort by score descending
+
+            // Assign ranks
+            participants.forEach((p, idx) => {
+                p.rank = idx + 1;
+            });
+
+            if (participants.length > 0) {
+                gamesData.push({
+                    gameName: actualName, // Use the actual matched sheet name
+                    participants,
+                    colorIndex: colorIndex
+                });
+                gameIndex++;
+            }
+        }
+    }
+
+    console.log('Loaded games:', gamesData.length);
 }
 
-// ===== Create Slides from Data =====
+// Helper: Find column index by possible names
+function findColumnIndex(headers, possibleNames) {
+    for (let i = 0; i < headers.length; i++) {
+        const header = headers[i].toLowerCase().trim();
+        for (const name of possibleNames) {
+            if (header === name.toLowerCase() || header.includes(name.toLowerCase())) {
+                return i;
+            }
+        }
+    }
+    // Default to position-based if not found
+    return possibleNames.includes('Score') ? 1 : 0;
+}
+
+// Normalize sheet name - trim spaces, handle case variations
+function normalizeSheetName(name) {
+    if (!name) return '';
+    return name.trim().replace(/\s+/g, ' '); // Trim and normalize multiple spaces
+}
+
+// Try fetching sheet with different case variations
+async function fetchSheetDataFlexible(sheetName) {
+    const normalized = normalizeSheetName(sheetName);
+
+    // Try exact name first
+    let data = await fetchSheetData(normalized);
+    if (data.rows.length > 0) return { data, actualName: normalized };
+
+    // Try Title Case
+    const titleCase = normalized.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    if (titleCase !== normalized) {
+        data = await fetchSheetData(titleCase);
+        if (data.rows.length > 0) return { data, actualName: titleCase };
+    }
+
+    // Try lowercase
+    const lower = normalized.toLowerCase();
+    if (lower !== normalized) {
+        data = await fetchSheetData(lower);
+        if (data.rows.length > 0) return { data, actualName: lower };
+    }
+
+    // Try UPPERCASE
+    const upper = normalized.toUpperCase();
+    if (upper !== normalized) {
+        data = await fetchSheetData(upper);
+        if (data.rows.length > 0) return { data, actualName: upper };
+    }
+
+    console.warn(`Could not find sheet: "${sheetName}" (tried various cases)`);
+    return { data: { headers: [], rows: [] }, actualName: normalized };
+}
+
+// Load game sheet names from GamesList sheet
+async function loadGamesList() {
+    const data = await fetchSheetData(config.gamesListSheet);
+    config.gameSheets = [];
+
+    console.log('GamesList headers:', data.headers);
+    console.log('GamesList rows:', data.rows.length);
+
+    if (data.rows.length > 0) {
+        // First column contains game names
+        data.rows.forEach(row => {
+            const gameName = row[0];
+            if (gameName && gameName.trim()) {
+                config.gameSheets.push(normalizeSheetName(gameName));
+            }
+        });
+    }
+
+    console.log('Loaded game sheets:', config.gameSheets);
+}
+
+// Load all data and create slides
+async function loadAllData() {
+    try {
+        await loadGamesList(); // First load the list of games
+        await loadParticipants();
+        await loadGameData();
+        createSlides();
+        showLoading(false);
+
+        if (slides.length > 0 && isPlaying) {
+            stopSlideshow();
+            startSlideshow();
+        }
+    } catch (error) {
+        console.error('Error loading data:', error);
+        showLoading(false);
+        showError('Failed to load data. Please check the Google Sheet is public.');
+    }
+}
+
+// ===== Create Slides =====
 function createSlides() {
     const slidesWrapper = document.getElementById('slidesWrapper');
     slidesWrapper.innerHTML = '';
-    
-    participantsData.forEach((participant, index) => {
-        const slide = document.createElement('div');
-        slide.className = `slide ${index === 0 ? 'active' : ''}`;
-        
-        const maxScore = Math.max(...participantsData.map(p => p.score));
-        const scorePercentage = (participant.score / maxScore) * 100;
-        
-        slide.innerHTML = `
-            <div class="participant-card">
-                <div class="rank-badge">#${participant.rank}</div>
-                <div class="participant-photo">
-                    <img src="${participant.photo}" alt="${participant.name}" onerror="this.src='https://via.placeholder.com/200'">
-                    <div class="photo-ring"></div>
+
+    if (gamesData.length === 0) {
+        slidesWrapper.innerHTML = '<div class="no-data"><i class="fas fa-exclamation-circle"></i><p>No game data available</p></div>';
+        return;
+    }
+
+    let slideIndex = 0;
+
+    // Create slides for each game
+    gamesData.forEach((game, gameIdx) => {
+        // Split participants into groups of 4
+        const chunks = chunkArray(game.participants, config.participantsPerSlide);
+
+        chunks.forEach((group, groupIdx) => {
+            const slide = document.createElement('div');
+            slide.className = `slide ${slideIndex === 0 ? 'active' : ''} game-color-${game.colorIndex}`;
+
+            const themeColor = gameColors[game.colorIndex];
+            const participantsHtml = group.map(p => `
+                <div class="participant-item">
+                    <span class="participant-rank">#${p.rank}</span>
+                    <div class="participant-photo-small">
+                        <img src="${p.photo}" alt="${p.name}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=${themeColor}&color=fff&size=80'">
+                    </div>
+                    <span class="participant-name-small">${p.name}</span>
+                    <span class="participant-score-small">${p.score} pts</span>
                 </div>
-                <h2 class="participant-name">${participant.name}</h2>
-                <div class="score-display">
-                    <span class="score-label">Score</span>
-                    <span class="score-value" data-score="${participant.score}">${participant.score}</span>
-                    <span class="score-points">points</span>
+            `).join('');
+
+            slide.innerHTML = `
+                <div class="game-slide">
+                    <div class="game-header">
+                        <h2 class="game-title"><i class="fas fa-trophy"></i> ${game.gameName}</h2>
+                        <span class="slide-info">${groupIdx + 1} / ${chunks.length}</span>
+                    </div>
+                    <div class="participants-list">
+                        ${participantsHtml}
+                    </div>
                 </div>
-                <div class="score-bar">
-                    <div class="score-progress" style="width: ${scorePercentage}%"></div>
-                </div>
-                <div class="achievement-badges">
-                    <span class="badge">
-                        <i class="${getBadgeIcon(participant.badge)}"></i> ${participant.badge}
-                    </span>
-                </div>
-            </div>
-        `;
-        
-        slidesWrapper.appendChild(slide);
+            `;
+
+            slidesWrapper.appendChild(slide);
+            slideIndex++;
+        });
     });
-    
+
     slides = document.querySelectorAll('.slide');
+    currentSlide = 0;
     updateDots();
+    updateLeaderboard();
+}
+
+// Helper: Split array into chunks
+function chunkArray(array, size) {
+    const chunks = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
 }
 
 // ===== Update Navigation Dots =====
 function updateDots() {
     const dotsContainer = document.getElementById('dotsContainer');
     dotsContainer.innerHTML = '';
-    
-    participantsData.forEach((_, index) => {
+
+    slides.forEach((_, index) => {
         const dot = document.createElement('span');
         dot.className = `dot ${index === 0 ? 'active' : ''}`;
         dot.dataset.slide = index;
@@ -201,22 +353,53 @@ function updateDots() {
     });
 }
 
-// ===== Update Leaderboard =====
+// ===== Update Leaderboard (Overall Top 5) =====
 function updateLeaderboard() {
     const leaderboardList = document.querySelector('.leaderboard-list');
+    if (!leaderboardList) return;
+
     leaderboardList.innerHTML = '';
-    
-    // Show top 5 participants
-    participantsData.slice(0, 5).forEach(participant => {
+
+    // Aggregate scores across all games
+    const totalScores = {};
+    gamesData.forEach(game => {
+        game.participants.forEach(p => {
+            const key = p.name.toLowerCase().trim();
+            if (!totalScores[key]) {
+                totalScores[key] = { name: p.name, score: 0 };
+            }
+            totalScores[key].score += p.score;
+        });
+    });
+
+    // Sort and show top 5
+    const sorted = Object.values(totalScores)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+
+    sorted.forEach((p, idx) => {
         const item = document.createElement('div');
         item.className = 'leaderboard-item';
         item.innerHTML = `
-            <span class="rank">${participant.rank}</span>
-            <span class="name">${participant.name}</span>
-            <span class="score">${participant.score}</span>
+            <span class="rank">${idx + 1}</span>
+            <span class="name">${p.name}</span>
+            <span class="score">${p.score}</span>
         `;
         leaderboardList.appendChild(item);
     });
+}
+
+// ===== UI Helpers =====
+function showLoading(show) {
+    const loadingState = document.getElementById('loadingState');
+    if (loadingState) {
+        loadingState.classList.toggle('show', show);
+    }
+}
+
+function showError(message) {
+    const slidesWrapper = document.getElementById('slidesWrapper');
+    slidesWrapper.innerHTML = `<div class="error-state"><i class="fas fa-exclamation-triangle"></i><p>${message}</p></div>`;
 }
 
 // ===== Slideshow Controls =====
@@ -234,34 +417,30 @@ function stopSlideshow() {
 
 function nextSlide() {
     if (slides.length === 0) return;
-    
+
     slides[currentSlide].classList.remove('active');
     currentSlide = (currentSlide + 1) % slides.length;
     slides[currentSlide].classList.add('active');
     updateActiveDot();
-    animateScoreCounter();
 }
 
 function prevSlide() {
     if (slides.length === 0) return;
-    
+
     slides[currentSlide].classList.remove('active');
     currentSlide = (currentSlide - 1 + slides.length) % slides.length;
     slides[currentSlide].classList.add('active');
     updateActiveDot();
-    animateScoreCounter();
 }
 
 function goToSlide(index) {
     if (slides.length === 0 || index >= slides.length) return;
-    
+
     slides[currentSlide].classList.remove('active');
     currentSlide = index;
     slides[currentSlide].classList.add('active');
     updateActiveDot();
-    animateScoreCounter();
-    
-    // Restart slideshow from this slide
+
     if (isPlaying) {
         stopSlideshow();
         startSlideshow();
@@ -275,28 +454,6 @@ function updateActiveDot() {
     });
 }
 
-// ===== Score Counter Animation =====
-function animateScoreCounter() {
-    const activeSlide = slides[currentSlide];
-    if (!activeSlide) return;
-    
-    const scoreElement = activeSlide.querySelector('.score-value');
-    if (!scoreElement) return;
-    
-    const targetScore = parseInt(scoreElement.dataset.score);
-    let currentScore = 0;
-    const increment = targetScore / 50;
-    const timer = setInterval(() => {
-        currentScore += increment;
-        if (currentScore >= targetScore) {
-            scoreElement.textContent = targetScore;
-            clearInterval(timer);
-        } else {
-            scoreElement.textContent = Math.floor(currentScore);
-        }
-    }, 20);
-}
-
 // ===== Initialize Controls =====
 function initializeControls() {
     // Play/Pause button
@@ -304,14 +461,14 @@ function initializeControls() {
     playPauseBtn.addEventListener('click', function() {
         isPlaying = !isPlaying;
         this.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
-        
+
         if (isPlaying) {
             startSlideshow();
         } else {
             stopSlideshow();
         }
     });
-    
+
     // Fullscreen button
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     fullscreenBtn.addEventListener('click', function() {
@@ -323,7 +480,7 @@ function initializeControls() {
             this.innerHTML = '<i class="fas fa-expand"></i>';
         }
     });
-    
+
     // Navigation buttons
     document.getElementById('prevBtn').addEventListener('click', () => {
         prevSlide();
@@ -332,7 +489,7 @@ function initializeControls() {
             startSlideshow();
         }
     });
-    
+
     document.getElementById('nextBtn').addEventListener('click', () => {
         nextSlide();
         if (isPlaying) {
@@ -340,7 +497,7 @@ function initializeControls() {
             startSlideshow();
         }
     });
-    
+
     // Keyboard controls
     document.addEventListener('keydown', function(e) {
         switch(e.key) {
@@ -367,69 +524,51 @@ function initializeSettings() {
     const settingsPanel = document.getElementById('settingsPanel');
     const slideDuration = document.getElementById('slideDuration');
     const durationValue = document.getElementById('durationValue');
-    const animationSpeed = document.getElementById('animationSpeed');
     const showLeaderboard = document.getElementById('showLeaderboard');
     const refreshData = document.getElementById('refreshData');
-    
+
     // Toggle settings panel
     settingsToggle.addEventListener('click', function() {
         settingsPanel.classList.toggle('active');
     });
-    
+
     // Slide duration control
     slideDuration.addEventListener('input', function() {
         config.slideDuration = this.value * 1000;
         durationValue.textContent = this.value + 's';
-        
+
         if (isPlaying) {
             stopSlideshow();
             startSlideshow();
         }
     });
-    
-    // Animation speed control
-    animationSpeed.addEventListener('change', function() {
-        const speeds = {
-            slow: 800,
-            normal: 500,
-            fast: 300
-        };
-        config.animationSpeed = speeds[this.value];
-        
-        // Update CSS transition duration
-        document.querySelectorAll('.slide').forEach(slide => {
-            slide.style.transition = `all ${config.animationSpeed}ms ease`;
-        });
-    });
-    
+
     // Show/hide leaderboard
     showLeaderboard.addEventListener('change', function() {
         const leaderboardSummary = document.getElementById('leaderboardSummary');
         leaderboardSummary.classList.toggle('show', this.checked);
     });
-    
+
     // Refresh data button
     refreshData.addEventListener('click', function() {
         this.innerHTML = '<i class="fas fa-sync fa-spin"></i> Refreshing...';
-        
-        // Simulate data refresh (replace with actual Google Sheets call)
-        setTimeout(() => {
-            loadSampleData(); // or loadGoogleSheetsData()
+
+        loadAllData().then(() => {
             this.innerHTML = '<i class="fas fa-sync"></i> Refresh Data';
-        }, 1000);
+        });
     });
 }
 
-// ===== Google Sheets Configuration Helper =====
-function setupGoogleSheets(apiKey, spreadsheetId) {
-    config.googleSheetsApiKey = apiKey;
-    config.spreadsheetId = spreadsheetId;
-    loadGoogleSheetsData();
+// ===== Configuration Helper =====
+function addGameSheet(sheetName) {
+    if (!config.gameSheets.includes(sheetName)) {
+        config.gameSheets.push(sheetName);
+    }
 }
 
 // Export for external use
-window.GamezScores = {
-    setupGoogleSheets,
-    loadGoogleSheetsData,
-    refreshData: loadGoogleSheetsData
+window.GAMAZEScores = {
+    loadAllData,
+    addGameSheet,
+    config
 };
