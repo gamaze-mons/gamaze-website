@@ -78,7 +78,10 @@ a {
 
 .nav-logo {
     height: 40px;
+    max-height: 40px;
     width: auto;
+    max-width: 120px;
+    object-fit: contain;
 }
 
 .nav-menu {
@@ -738,7 +741,10 @@ a {
 
 .footer-logo {
     height: 35px;
+    max-height: 35px;
     width: auto;
+    max-width: 100px;
+    object-fit: contain;
 }
 
 .social-links {
