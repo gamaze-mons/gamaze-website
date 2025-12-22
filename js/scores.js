@@ -8,7 +8,7 @@ const config = {
     gameSheets: [], // Will be populated dynamically
     slideDuration: 5000, // 5 seconds per slide
     animationSpeed: 500,
-    participantsPerSlide: 8,
+    participantsPerSlide: 10,
     refreshInterval: 30000 // Refresh data every 30 seconds
 };
 
