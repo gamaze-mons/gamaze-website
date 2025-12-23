@@ -6,72 +6,76 @@
     <title>Live Scores - GAMAZE</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&family=Inter:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/carnival-slides.css">
 </head>
-<body class="scores-page">
-    <!-- Header -->
-    <header class="scores-header">
-        <div class="header-content">
-            <a href="index.html" class="back-btn">
-                <i class="fas fa-arrow-left"></i>
-                Back to Home
-            </a>
-            <div class="event-title">
-                <div class="brand-mini">
-                    <img src="assets/images/logo-transparent.png" alt="GAMAZE" class="brand-logo">
-                </div>
-                <h1>Live Scores</h1>
-                <div class="live-indicator">
-                    <span class="pulse"></span>
-                    LIVE
+<body class="carnival-page">
+    <!-- Carnival Slide Container -->
+    <div class="carnival-container" id="carnivalContainer">
+        <!-- Left Curtain -->
+        <div class="curtain curtain-left"></div>
+
+        <!-- Right Curtain -->
+        <div class="curtain curtain-right"></div>
+
+        <!-- Top Canopy -->
+        <div class="canopy"></div>
+
+        <!-- Main Content Area -->
+        <div class="carnival-content">
+            <!-- Header with Logo -->
+            <div class="carnival-header">
+                <img src="assets/images/logo-transparent.png" alt="GAMAZE" class="carnival-logo">
+                <div class="carnival-brand">
+                    <span class="brand-name">GAMAZE</span>
+                    <span class="brand-tagline">Get Amazed with Games</span>
                 </div>
             </div>
-            <div class="controls">
-                <button id="playPauseBtn" class="control-btn" title="Play/Pause (Space)">
-                    <i class="fas fa-pause"></i>
-                </button>
-                <button id="fullscreenBtn" class="control-btn" title="Fullscreen (F)">
-                    <i class="fas fa-expand"></i>
-                </button>
+
+            <!-- Game Title -->
+            <h1 class="game-name" id="gameName">Loading...</h1>
+
+            <!-- Top 5 Participants -->
+            <div class="participants-row" id="participantsRow">
+                <!-- Dynamic content -->
+            </div>
+
+            <!-- Score Table -->
+            <div class="score-table" id="scoreTable">
+                <!-- Dynamic content -->
             </div>
         </div>
-    </header>
 
-    <!-- Slideshow Container -->
-    <div class="slideshow-container">
+        <!-- Footer Tagline -->
+        <div class="carnival-footer">
+            <p>"Level up" your events with exciting gaming experiences. Our interactive setups enhance the celebration and foster a lively, vibrant atmosphere..</p>
+        </div>
+
         <!-- Loading State -->
-        <div class="loading-state show" id="loadingState">
+        <div class="carnival-loading" id="loadingState">
             <div class="loader"></div>
-            <p>Loading scores from Google Sheets...</p>
+            <p>Loading scores...</p>
         </div>
-
-        <!-- Slides will be dynamically inserted here -->
-        <div class="slides-wrapper" id="slidesWrapper">
-            <!-- Dynamic content -->
-        </div>
-
-        <!-- Navigation Dots -->
-        <div class="dots-container" id="dotsContainer">
-            <!-- Dynamic dots -->
-        </div>
-
-        <!-- Manual Navigation -->
-        <button class="nav-btn prev" id="prevBtn" title="Previous (Left Arrow)">
-            <i class="fas fa-chevron-left"></i>
-        </button>
-        <button class="nav-btn next" id="nextBtn" title="Next (Right Arrow)">
-            <i class="fas fa-chevron-right"></i>
-        </button>
     </div>
 
-    <!-- Leaderboard Summary -->
-    <div class="leaderboard-summary" id="leaderboardSummary">
-        <h3><i class="fas fa-trophy"></i> Overall Leaderboard</h3>
-        <div class="leaderboard-list">
-            <!-- Dynamic content -->
-        </div>
+    <!-- Navigation Arrows -->
+    <button class="nav-arrow nav-prev" id="prevBtn" title="Previous (Left Arrow)">
+        <i class="fas fa-chevron-left"></i>
+    </button>
+    <button class="nav-arrow nav-next" id="nextBtn" title="Next (Right Arrow)">
+        <i class="fas fa-chevron-right"></i>
+    </button>
+
+    <!-- Bottom Controls -->
+    <div class="slide-controls">
+        <button id="playPauseBtn" class="slide-btn" title="Play/Pause (Space)">
+            <i class="fas fa-pause"></i>
+        </button>
+        <button id="fullscreenBtn" class="slide-btn" title="Fullscreen (F)">
+            <i class="fas fa-expand"></i>
+        </button>
     </div>
 
     <!-- Settings Panel -->
@@ -83,12 +87,10 @@
             <h3>Display Settings</h3>
             <div class="setting-item">
                 <label>Slide Duration</label>
-                <input type="range" id="slideDuration" min="1" max="15" value="5">
-                <span id="durationValue">5s</span>
-            </div>
-            <div class="setting-item">
-                <label>Show Leaderboard</label>
-                <input type="checkbox" id="showLeaderboard">
+                <div class="slider-row">
+                    <input type="range" id="slideDuration" min="3" max="20" value="8">
+                    <span id="durationValue">8s</span>
+                </div>
             </div>
             <div class="setting-item">
                 <button id="refreshData" class="btn-refresh">
