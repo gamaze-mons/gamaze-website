@@ -72,6 +72,13 @@ function RootLayoutNav() {
             title: 'Enter Score'
           }} 
         />
+        <Stack.Screen 
+          name="registration" 
+          options={{ 
+            headerShown: false,
+            title: 'Manage Participants'
+          }} 
+        />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>
     </ThemeProvider>

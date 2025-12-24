@@ -151,12 +151,13 @@ async function loadGameData() {
             const participants = data.rows
                 .map(row => {
                     const name = row[nameIdx] || '';
-                    const score = parseInt(row[scoreIdx]) || 0;
+                    const rawScore = row[scoreIdx];
+                    const score = parseScore(rawScore);
                     const photoKey = name.toLowerCase().trim();
                     const photo = participantsData[photoKey] ||
                         `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1a237e&color=fff&size=150`;
 
-                    return { name, score, photo };
+                    return { name, score, rawScore, photo };
                 })
                 .filter(p => p.name)
                 .sort((a, b) => b.score - a.score)
@@ -183,6 +184,79 @@ function findColumnIndex(headers, possibleNames) {
         }
     }
     return possibleNames.includes('Score') ? 1 : 0;
+}
+
+// Helper: Parse score - handles numeric, MM:SS time format, Google Sheets Date format, and timer+points format
+// Returns a numeric value for sorting (higher = better rank)
+function parseScore(rawScore) {
+    if (rawScore === null || rawScore === undefined || rawScore === '') {
+        return 0;
+    }
+
+    const scoreStr = String(rawScore).trim();
+
+    // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
+    // This is how Google Sheets returns time values via the API
+    const dateMatch = scoreStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
+    if (dateMatch) {
+        const hours = parseInt(dateMatch[1]) || 0;
+        const minutes = parseInt(dateMatch[2]) || 0;
+        const seconds = parseInt(dateMatch[3]) || 0;
+        const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+        // Return negative so lower time ranks higher in descending sort
+        return -totalSeconds;
+    }
+
+    // Handle "MM:SS - Xpts" format (timerAndPoints)
+    // Sort by points first, then by time (lower time = better)
+    const timerPointsMatch = scoreStr.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d+)\s*pts?$/i);
+    if (timerPointsMatch) {
+        const minutes = parseInt(timerPointsMatch[1]) || 0;
+        const seconds = parseInt(timerPointsMatch[2]) || 0;
+        const points = parseInt(timerPointsMatch[3]) || 0;
+        const totalSeconds = minutes * 60 + seconds;
+        // Points * 10000 dominates, subtract seconds so lower time wins tiebreaker
+        return points * 10000 - totalSeconds;
+    }
+
+    // Handle MM:SS time format (stopwatch/timeRace) - lower time = better
+    const timeMatch = scoreStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch) {
+        const minutes = parseInt(timeMatch[1]) || 0;
+        const seconds = parseInt(timeMatch[2]) || 0;
+        const totalSeconds = minutes * 60 + seconds;
+        // Return negative so lower time ranks higher in descending sort
+        return -totalSeconds;
+    }
+
+    // Handle plain numeric score (higher = better)
+    const numScore = parseFloat(scoreStr);
+    return isNaN(numScore) ? 0 : numScore;
+}
+
+// Helper: Format raw score for display
+function formatScoreForDisplay(rawScore) {
+    if (rawScore === null || rawScore === undefined || rawScore === '') {
+        return '0';
+    }
+
+    const scoreStr = String(rawScore).trim();
+
+    // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
+    const dateMatch = scoreStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
+    if (dateMatch) {
+        const hours = parseInt(dateMatch[1]) || 0;
+        const minutes = parseInt(dateMatch[2]) || 0;
+        const seconds = parseInt(dateMatch[3]) || 0;
+        // Format as MM:SS or HH:MM:SS
+        if (hours > 0) {
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    // Return as-is for other formats
+    return scoreStr;
 }
 
 // Load all data
@@ -234,7 +308,7 @@ function renderCurrentGame() {
                      onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
             </div>
             <div class="participant-name">${p.name}</div>
-            <div class="participant-score">Score: ${p.score}</div>
+            <div class="participant-score">Score: ${formatScoreForDisplay(p.rawScore)}</div>
         </div>
     `).join('');
 

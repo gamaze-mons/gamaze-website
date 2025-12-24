@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Gamaze ScoreMaster",
-    "slug": "gamaze-scoremaster",
+    "slug": "gamez-scoreboard",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/gamaze_logo.png",
@@ -17,17 +17,14 @@
       "supportsTablet": true
     },
     "android": {
-      "package": "com.gamez.scoreboard",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/gamaze_logo.png",
-        "backgroundColor": "#ffffff"
-      },
+      "package": "com.gamaze.scoremaster",
+      "icon": "./assets/images/gamaze_logo.png",
       "edgeToEdgeEnabled": true
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/gamaze_logo.png"
     },
     "plugins": [
       "expo-router",

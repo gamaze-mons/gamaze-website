@@ -1,18 +1,14 @@
 // Google Sheets API Service
 // Note: This approach exposes API credentials in the app (not recommended for production)
 
-const GOOGLE_SHEETS_API_KEY = 'AIzaSyAu3pGGxPkULVDrV2gvvWobYTYCDuFKKB4'; // Replace with your actual API key
-const SPREADSHEET_ID = '1Rn_QwF3QdpVojp4JWKk7F_fNGRKSY6OYfnUQnI8jbJQ'; // Replace with your spreadsheet ID
-
-// Google Apps Script Web App URL - Update this with your deployed script URL
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxOSfrrxa2VUXbtlTkadKUIxpfkvO2bglXJI7XSxw2RCcnbiho79NhumqPIJHSQFXWQ/exec';
+import { GOOGLE_CONFIG } from '../config/constants';
 
 export class GoogleSheetsService {
   // Test function to verify API key
   static async testApiKey() {
     try {
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?key=${GOOGLE_SHEETS_API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_CONFIG.SPREADSHEET_ID}?key=${GOOGLE_CONFIG.GOOGLE_SHEETS_API_KEY}`
       );
       
       if (response.ok) {
@@ -29,55 +25,57 @@ export class GoogleSheetsService {
     }
   }
 
-  static async addScore(gameName, participantName, score) {
+  static async addScore(gameName, participantName, score, pointsScored = null) {
     try {
-      // Test API key first
-      const apiKeyValid = await this.testApiKey();
-      if (!apiKeyValid) {
-        throw new Error('Invalid API key or spreadsheet ID. Please check your configuration.');
-      }
+      const timestamp = new Date().toISOString();
 
-      // Create the spreadsheet name based on game
-      const spreadsheetName = `${gameName}.xlsx`;
-      
-      // Prepare the row data
-      const rowData = [
-        {
-          values: [
-            { userEnteredValue: { stringValue: participantName } },
-            { userEnteredValue: { stringValue: score.toString() } }
-          ]
+      // Determine the request body based on whether this is a timerAndPoints game
+      let requestBody;
+      if (pointsScored !== null) {
+        // This is a timerAndPoints game - send 4 values
+        requestBody = {
+          action: 'addScore',
+          gameName: gameName,
+          participantName: participantName,
+          timeTaken: score, // score parameter contains timeTaken
+          pointsScored: pointsScored,
+          timestamp: timestamp
+        };
+      } else {
+        // This is a regular game - send 3 values
+        requestBody = {
+          action: 'addScore',
+          gameName: gameName,
+          participantName: participantName,
+          score: score,
+          timestamp: timestamp
+        };
         }
-      ];
 
-      // First, try to find the sheet or create it
-      const sheetName = gameName;
+      console.log('Sending score data:', requestBody);
       
-      // Add the row to the sheet
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A:C:append?valueInputOption=USER_ENTERED&key=${GOOGLE_SHEETS_API_KEY}`,
-        {
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            values: [[participantName, score, new Date().toISOString()]]
-          })
-        }
-      );
+        body: JSON.stringify(requestBody),
+      });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const result = await response.json();
-      console.log('Successfully added to Google Sheets:', result);
-      return result;
+      console.log('Score submission result:', result);
 
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to add score');
+      }
+
+      return result;
     } catch (error) {
-      console.error('Error adding to Google Sheets:', error);
+      console.error('Error adding score:', error);
       throw error;
     }
   }
@@ -96,48 +94,57 @@ export class GoogleSheetsService {
 
 // Alternative approach using Google Apps Script (more secure)
 export class GoogleAppsScriptService {
-  static async addScore(gameName, participantName, score) {
+  static async addScore(gameName, participantName, score, pointsScored = null) {
     try {
-      console.log('Sending score to Google Apps Script:', { gameName, participantName, score });
+      const timestamp = new Date().toISOString();
       
-      const response = await fetch(SCRIPT_URL, {
+      // Determine the request body based on whether this is a timerAndPoints game
+      let requestBody;
+      if (pointsScored !== null) {
+        // This is a timerAndPoints game - send 4 values
+        requestBody = {
+          action: 'addScore',
+          gameName: gameName,
+          participantName: participantName,
+          timeTaken: score, // score parameter contains timeTaken
+          pointsScored: pointsScored,
+          timestamp: timestamp
+        };
+      } else {
+        // This is a regular game - send 3 values
+        requestBody = {
+          action: 'addScore',
+          gameName: gameName,
+          participantName: participantName,
+          score: score,
+          timestamp: timestamp
+        };
+      }
+
+      console.log('Sending score to Google Apps Script:', requestBody);
+      
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          action: 'addScore',
-          gameName,
-          participantName,
-          score,
-          timestamp: new Date().toISOString()
-        })
+        body: JSON.stringify(requestBody)
       });
-
-      console.log('Apps Script response status:', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Apps Script HTTP error:', response.status, errorText);
+        console.error('HTTP error:', response.status, errorText);
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
       }
 
       const result = await response.json();
-      console.log('Apps Script response:', result);
       
-      // Check if the result contains an error
       if (result.error) {
-        console.error('Apps Script returned error:', result.error);
-        throw new Error(`Apps Script error: ${result.error}`);
+        console.error('Apps Script error:', result.error);
+        throw new Error(result.error);
       }
       
-      // Verify success response
-      if (!result.success) {
-        console.error('Apps Script did not return success:', result);
-        throw new Error('Apps Script did not return success status');
-      }
-      
-      console.log('Successfully added via Apps Script:', result);
+      console.log('Successfully added score via Apps Script:', result);
       return result;
 
     } catch (error) {
@@ -150,7 +157,7 @@ export class GoogleAppsScriptService {
     try {
       console.log('Sending participant to Google Apps Script:', { gameName, participantName, photoUrl });
       
-      const response = await fetch(SCRIPT_URL, {
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -164,27 +171,17 @@ export class GoogleAppsScriptService {
         })
       });
 
-      console.log('Apps Script response status:', response.status);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Apps Script HTTP error:', response.status, errorText);
+        console.error('HTTP error:', response.status, errorText);
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
       }
 
       const result = await response.json();
-      console.log('Apps Script response:', result);
       
-      // Check if the result contains an error
       if (result.error) {
-        console.error('Apps Script returned error:', result.error);
-        throw new Error(`Apps Script error: ${result.error}`);
-      }
-      
-      // Verify success response
-      if (!result.success) {
-        console.error('Apps Script did not return success:', result);
-        throw new Error('Apps Script did not return success status');
+        console.error('Apps Script error:', result.error);
+        throw new Error(result.error);
       }
       
       console.log('Successfully added participant via Apps Script:', result);
@@ -199,7 +196,7 @@ export class GoogleAppsScriptService {
   static async getParticipants(gameName) {
     try {
       console.log('Fetching participants from Google Apps Script:');
-      console.log('Script URL:', SCRIPT_URL);
+      console.log('Script URL:', GOOGLE_CONFIG.SCRIPT_URL);
       console.log('Game name parameter:', gameName);
       
       const requestBody = {
@@ -209,7 +206,7 @@ export class GoogleAppsScriptService {
       };
       console.log('Request body:', requestBody);
       
-      const response = await fetch(SCRIPT_URL, {
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -217,36 +214,26 @@ export class GoogleAppsScriptService {
         body: JSON.stringify(requestBody)
       });
 
-      console.log('Apps Script response status:', response.status);
-      console.log('Response headers:', response.headers);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Apps Script HTTP error:', response.status, errorText);
+        console.error('HTTP error:', response.status, errorText);
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
       }
 
       const result = await response.json();
-      console.log('Apps Script response:', result);
-      console.log('Response success:', result.success);
-      console.log('Response participants:', result.participants);
-      
-      // Check if the result contains an error
+
       if (result.error) {
-        console.error('Apps Script returned error:', result.error);
-        throw new Error(`Apps Script error: ${result.error}`);
+        console.error('Apps Script error:', result.error);
+        throw new Error(result.error);
       }
       
-      // Return the participants array
-      return {
-        success: true,
-        participants: result.participants || []
-      };
+      console.log('Successfully fetched participants via Apps Script:', result);
+      return result;
 
     } catch (error) {
       console.error('Error fetching participants via Apps Script:', error);
       console.error('Error details:', error.message);
-      // Return empty array on error to prevent app crash
+      // Return empty array instead of throwing to prevent app crashes
       return {
         success: true,
         participants: []
@@ -259,7 +246,7 @@ export class GoogleAppsScriptService {
     try {
       console.log('Getting upload URL for participant:', participantName);
       
-      const response = await fetch(SCRIPT_URL, {
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -301,7 +288,7 @@ export class GoogleAppsScriptService {
       console.log('Saving photo URL for participant:', participantName);
       console.log('Photo URL:', photoUrl);
 
-      const response = await fetch(SCRIPT_URL, {
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -343,7 +330,7 @@ export class GoogleAppsScriptService {
     try {
       console.log('Fetching games from Google Apps Script');
 
-      const response = await fetch(SCRIPT_URL, {
+      const response = await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -325,9 +325,22 @@ export default function ScoringScreen() {
     try {
       // For timerAndPoints, send separate time and points values
       if (scoringMethod === 'timerAndPoints') {
+        console.log('=== SCORE SUBMISSION (timerAndPoints) ===');
+        console.log('Game:', gameName);
+        console.log('Participant:', participantName);
+        console.log('Time Taken:', timerAndPointsTimeTaken);
+        console.log('Points Scored:', timerAndPointsPointsScored);
+        console.log('Scoring Method:', scoringMethod);
+        console.log('=========================================');
         await GoogleAppsScriptService.addScore(gameName, participantName, timerAndPointsTimeTaken, timerAndPointsPointsScored);
       } else {
         // For other games, send regular score
+        console.log('=== SCORE SUBMISSION ===');
+        console.log('Game:', gameName);
+        console.log('Participant:', participantName);
+        console.log('Score:', score);
+        console.log('Scoring Method:', scoringMethod);
+        console.log('========================');
         await GoogleAppsScriptService.addScore(gameName, participantName, score);
       }
       

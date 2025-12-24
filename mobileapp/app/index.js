@@ -34,7 +34,7 @@ const fallbackGames = [
     id: 5,
     name: 'Fishing',
     description: 'Count fishes caught within 2 or 4 minutes',
-    scoringMethod: 'points'
+    scoringMethod: 'timerAndPoints'
   },
   {
     id: 6,
@@ -70,7 +70,7 @@ const fallbackGames = [
     id: 11,
     name: 'Tower Tumble',
     description: 'Stack and balance objects - points-based',
-    scoringMethod: 'points'
+    scoringMethod: 'timerAndPoints'
   },
   {
     id: 12,
@@ -159,7 +159,7 @@ export default function GameSelectionScreen() {
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.title}>Game Scoring App</Text>
+            <Text style={styles.title}>ScoreMaster</Text>
             <Text style={styles.subtitle}>Select a game to start scoring</Text>
           </View>
           <TouchableOpacity onPress={loadGames} style={styles.refreshButton}>
