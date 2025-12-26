@@ -3,66 +3,55 @@
 // Configuration
 const config = {
     spreadsheetId: '1C-07WttxU_PgzzobzYYjtwgYqOT3MIetkAsraShi5Us',
+    apiKey: 'AIzaSyBHVyP4qX3-WA2t3lIo14KK3Nbg5aY6MGs', // Google Sheets API key
     participantsSheet: 'Participants',
     gamesListSheet: 'GamesList',
     gameSheets: [],
     slideDuration: 8000, // 8 seconds per slide
     topParticipants: 5, // Show top 5 per game
-    refreshInterval: 1000 // 1 second - live refresh
+    participantsRefreshInterval: 60000 // Refresh participants every 60 seconds
 };
 
 // State
 let currentGameIndex = 0;
-let gamesData = [];
+let gamesData = []; // Cache for game data
 let participantsData = {};
 let isPlaying = true;
 let slideInterval;
+let currentGameRefreshInterval; // Refresh current game periodically
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
     initializeControls();
     showLoading(true);
-    loadAllData();
-    setInterval(loadAllData, config.refreshInterval);
+    loadInitialData();
+    // Refresh participants periodically (photos might change)
+    setInterval(loadParticipants, config.participantsRefreshInterval);
 });
 
-// ===== Google Sheets Data Fetching =====
+// ===== Google Sheets Data Fetching (Using Sheets API v4) =====
 async function fetchSheetData(sheetName) {
-    // Add cache-busting timestamp to prevent caching
-    const cacheBuster = Date.now();
-    const url = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}&_cb=${cacheBuster}`;
+    // Using Google Sheets API v4 for real-time data (no caching)
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetName)}?key=${config.apiKey}`;
+
+    console.log(`Fetching: ${sheetName}`);
 
     try {
         const response = await fetch(url);
-        const text = await response.text();
-        const jsonStart = text.indexOf('{');
-        const jsonEnd = text.lastIndexOf('}');
-        const jsonString = text.substring(jsonStart, jsonEnd + 1);
-        const data = JSON.parse(jsonString);
+        const data = await response.json();
 
-        if (data.table && data.table.rows) {
-            let headers = data.table.cols.map((col, idx) => col.label || col.id || `col${idx}`);
-            let rows = data.table.rows.map(row => {
-                return row.c.map(cell => cell ? (cell.v !== null ? cell.v : '') : '');
-            });
+        console.log(`Response for "${sheetName}":`, data);
 
-            if (rows.length > 0) {
-                const firstRow = rows[0];
-                const headerKeywords = ['name', 'photo', 'score', 'datetime', 'timetaken', 'pointsscored', 'participant', 'url'];
-                const looksLikeHeaders = firstRow.some(cell => {
-                    if (typeof cell !== 'string') return false;
-                    const cellLower = cell.toLowerCase().replace(/\s+/g, '');
-                    // Exclude Google Sheets Date format like Date(1899,11,30,...)
-                    if (/^date\(\d+,\d+,\d+/.test(cellLower)) return false;
-                    return headerKeywords.some(kw => cellLower.includes(kw));
-                });
+        if (data.error) {
+            console.error(`API Error for "${sheetName}":`, data.error.message, data.error);
+            return { headers: [], rows: [] };
+        }
 
-                if (looksLikeHeaders) {
-                    headers = firstRow.map(h => String(h));
-                    rows = rows.slice(1);
-                }
-            }
-
+        if (data.values && data.values.length > 0) {
+            // First row is headers, rest are data rows
+            const headers = data.values[0];
+            const rows = data.values.slice(1);
+            console.log(`Got ${rows.length} rows from "${sheetName}"`);
             return { headers, rows };
         }
         return { headers: [], rows: [] };
@@ -115,91 +104,11 @@ async function loadGamesList() {
     }
 }
 
-// Try fetching with different case variations
+// Fetch sheet data (single request - sheet names are case-sensitive in API)
 async function fetchSheetDataFlexible(sheetName) {
-    const normalized = sheetName.trim().replace(/\s+/g, ' ');
-
-    let data = await fetchSheetData(normalized);
-    if (data.rows.length > 0) return { data, actualName: normalized };
-
-    const titleCase = normalized.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-    if (titleCase !== normalized) {
-        data = await fetchSheetData(titleCase);
-        if (data.rows.length > 0) return { data, actualName: titleCase };
-    }
-
-    const lower = normalized.toLowerCase();
-    if (lower !== normalized) {
-        data = await fetchSheetData(lower);
-        if (data.rows.length > 0) return { data, actualName: lower };
-    }
-
-    const upper = normalized.toUpperCase();
-    if (upper !== normalized) {
-        data = await fetchSheetData(upper);
-        if (data.rows.length > 0) return { data, actualName: upper };
-    }
-
-    return { data: { headers: [], rows: [] }, actualName: normalized };
-}
-
-// Load all game data
-async function loadGameData() {
-    gamesData = [];
-
-    for (const gameName of config.gameSheets) {
-        const { data, actualName } = await fetchSheetDataFlexible(gameName);
-
-        if (data.rows.length > 0) {
-            // Debug: Log headers to see what columns exist
-            console.log(`=== ${actualName} Headers ===`, data.headers);
-
-            const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
-            const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points']);
-
-            // Check for timerAndPoints game (has both TimeTaken and PointsScored columns)
-            const timeIdx = findColumnIndexExact(data.headers, ['TimeTaken', 'Time Taken', 'Time']);
-            const pointsIdx = findColumnIndexExact(data.headers, ['PointsScored', 'Points Scored']);
-            const isTimerAndPoints = timeIdx !== -1 && pointsIdx !== -1;
-
-            console.log(`${actualName}: timeIdx=${timeIdx}, pointsIdx=${pointsIdx}, isTimerAndPoints=${isTimerAndPoints}`);
-
-            const participants = data.rows
-                .map(row => {
-                    const name = row[nameIdx] || '';
-                    const photoKey = name.toLowerCase().trim();
-                    const photo = participantsData[photoKey] ||
-                        `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1a237e&color=fff&size=150`;
-
-                    if (isTimerAndPoints) {
-                        // timerAndPoints game - read both columns
-                        const rawTime = row[timeIdx];
-                        const rawPoints = row[pointsIdx];
-                        const points = parseFloat(rawPoints) || 0;
-                        const timeSeconds = parseTimeToSeconds(rawTime);
-                        // Score: points dominate, lower time wins tiebreaker
-                        const score = points * 10000 - timeSeconds;
-                        return { name, score, rawTime, rawPoints: points, isTimerAndPoints: true, photo };
-                    } else {
-                        // Regular game - single score column
-                        const rawScore = row[scoreIdx];
-                        const score = parseScore(rawScore);
-                        return { name, score, rawScore, isTimerAndPoints: false, photo };
-                    }
-                })
-                .filter(p => p.name)
-                .sort((a, b) => b.score - a.score)
-                .slice(0, config.topParticipants); // Top 5 only
-
-            if (participants.length > 0) {
-                gamesData.push({
-                    gameName: actualName,
-                    participants,
-                    isTimerAndPoints
-                });
-            }
-        }
-    }
+    const normalized = sheetName.trim();
+    const data = await fetchSheetData(normalized);
+    return { data, actualName: normalized };
 }
 
 // Helper: Find column index (exact match only, returns -1 if not found)
@@ -361,28 +270,105 @@ function formatScoreForDisplay(rawScore) {
     return scoreStr;
 }
 
-// Load all data
-async function loadAllData() {
+// Load initial data (GamesList + Participants only)
+async function loadInitialData() {
     try {
         await loadGamesList();
         await loadParticipants();
-        await loadGameData();
         showLoading(false);
 
-        if (gamesData.length > 0) {
-            renderCurrentGame();
+        if (config.gameSheets.length > 0) {
+            // Load first game and start slideshow
+            await loadAndShowGame(0);
             if (isPlaying) {
-                stopSlideshow();
                 startSlideshow();
             }
         } else {
             showNoData();
         }
     } catch (error) {
-        console.error('Error loading data:', error);
+        console.error('Error loading initial data:', error);
         showLoading(false);
         showError();
     }
+}
+
+// Load a single game's data and display it
+async function loadAndShowGame(gameIndex) {
+    if (config.gameSheets.length === 0) return;
+
+    const gameName = config.gameSheets[gameIndex];
+    console.log(`Loading game: ${gameName}`);
+
+    try {
+        const { data, actualName } = await fetchSheetDataFlexible(gameName);
+
+        if (data.rows.length > 0) {
+            const gameData = processGameData(data, actualName);
+            if (gameData) {
+                // Update cache for this game
+                gamesData[gameIndex] = gameData;
+                currentGameIndex = gameIndex;
+                renderCurrentGame();
+                return;
+            }
+        }
+
+        // If no data but we have cached data, show cached
+        if (gamesData[gameIndex]) {
+            currentGameIndex = gameIndex;
+            renderCurrentGame();
+            console.log(`Using cached data for: ${gameName}`);
+        }
+    } catch (error) {
+        console.error(`Error loading game ${gameName}:`, error);
+        // On error, try to show cached data
+        if (gamesData[gameIndex]) {
+            currentGameIndex = gameIndex;
+            renderCurrentGame();
+            console.log(`Using cached data due to error for: ${gameName}`);
+        }
+    }
+}
+
+// Process game data from sheet
+function processGameData(data, gameName) {
+    const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
+    const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points']);
+
+    // Check for timerAndPoints game
+    const timeIdx = findColumnIndexExact(data.headers, ['TimeTaken', 'Time Taken', 'Time']);
+    const pointsIdx = findColumnIndexExact(data.headers, ['PointsScored', 'Points Scored']);
+    const isTimerAndPoints = timeIdx !== -1 && pointsIdx !== -1;
+
+    const participants = data.rows
+        .map(row => {
+            const name = row[nameIdx] || '';
+            const photoKey = name.toLowerCase().trim();
+            const photo = participantsData[photoKey] ||
+                `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1a237e&color=fff&size=150`;
+
+            if (isTimerAndPoints) {
+                const rawTime = row[timeIdx];
+                const rawPoints = row[pointsIdx];
+                const points = parseFloat(rawPoints) || 0;
+                const timeSeconds = parseTimeToSeconds(rawTime);
+                const score = points * 10000 - timeSeconds;
+                return { name, score, rawTime, rawPoints: points, isTimerAndPoints: true, photo };
+            } else {
+                const rawScore = row[scoreIdx];
+                const score = parseScore(rawScore);
+                return { name, score, rawScore, isTimerAndPoints: false, photo };
+            }
+        })
+        .filter(p => p.name)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, config.topParticipants);
+
+    if (participants.length > 0) {
+        return { gameName, participants, isTimerAndPoints };
+    }
+    return null;
 }
 
 // ===== Render Functions =====
@@ -439,32 +425,74 @@ function renderCurrentGame() {
     scoreTable.innerHTML = '';
 }
 
-function nextGame() {
-    if (gamesData.length === 0) return;
-    currentGameIndex = (currentGameIndex + 1) % gamesData.length;
-    renderCurrentGame();
+async function nextGame() {
+    if (config.gameSheets.length === 0) return;
+    const nextIndex = (currentGameIndex + 1) % config.gameSheets.length;
+    await loadAndShowGame(nextIndex);
 }
 
-function prevGame() {
-    if (gamesData.length === 0) return;
-    currentGameIndex = (currentGameIndex - 1 + gamesData.length) % gamesData.length;
-    renderCurrentGame();
+async function prevGame() {
+    if (config.gameSheets.length === 0) return;
+    const prevIndex = (currentGameIndex - 1 + config.gameSheets.length) % config.gameSheets.length;
+    await loadAndShowGame(prevIndex);
 }
 
 // ===== Slideshow Controls =====
 function startSlideshow() {
-    if (isPlaying && gamesData.length > 1) {
+    if (isPlaying && config.gameSheets.length > 1) {
         slideInterval = setInterval(nextGame, config.slideDuration);
     }
+    // Also start refreshing current game data periodically
+    startCurrentGameRefresh();
 }
 
 function stopSlideshow() {
     clearInterval(slideInterval);
 }
 
+// Refresh current game data periodically (even when paused)
+function startCurrentGameRefresh() {
+    // Clear any existing interval
+    if (currentGameRefreshInterval) {
+        clearInterval(currentGameRefreshInterval);
+    }
+    // Refresh current game every 5 seconds
+    currentGameRefreshInterval = setInterval(() => {
+        if (config.gameSheets.length > 0) {
+            refreshCurrentGame();
+        }
+    }, 5000);
+}
+
+// Refresh only the currently displayed game
+async function refreshCurrentGame() {
+    if (config.gameSheets.length === 0) return;
+
+    const gameName = config.gameSheets[currentGameIndex];
+    console.log(`Refreshing current game: ${gameName}`);
+
+    try {
+        const { data, actualName } = await fetchSheetDataFlexible(gameName);
+
+        if (data.rows.length > 0) {
+            const gameData = processGameData(data, actualName);
+            if (gameData) {
+                gamesData[currentGameIndex] = gameData;
+                renderCurrentGame();
+            }
+        }
+    } catch (error) {
+        console.error(`Error refreshing game ${gameName}:`, error);
+        // Keep showing cached data on error
+    }
+}
+
 function togglePlayPause() {
     isPlaying = !isPlaying;
     const btn = document.getElementById('playPauseBtn');
+
+    // Always keep current game refresh running (even when paused)
+    startCurrentGameRefresh();
     btn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
 
     if (isPlaying) {

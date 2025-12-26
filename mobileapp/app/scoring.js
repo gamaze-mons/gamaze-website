@@ -276,7 +276,7 @@ export default function ScoringScreen() {
     setIsTesting(true);
     try {
       // Test with the Google Apps Script service
-      const result = await GoogleAppsScriptService.addScore('Test', 'Test User', '100');
+      const result = await GoogleAppsScriptService.addScore('Test', '100', null, 'Test User');
       
       if (result.success) {
         Alert.alert('Success!', 'Google Apps Script connection is working correctly.\n\nScore was successfully added to the spreadsheet.');
@@ -310,11 +310,26 @@ export default function ScoringScreen() {
       // Store the time and navigate to participant selection
       router.push({
         pathname: '/participant',
-        params: { 
-          gameName: gameName, 
+        params: {
+          gameName: gameName,
           gameId: gameId,
           scoringMethod: scoringMethod,
           capturedTime: score
+        }
+      });
+      return;
+    }
+
+    // For timerAndPoints, capture time and points first, then navigate to participant selection
+    if (scoringMethod === 'timerAndPoints') {
+      router.push({
+        pathname: '/participant',
+        params: {
+          gameName: gameName,
+          gameId: gameId,
+          scoringMethod: scoringMethod,
+          capturedTime: timerAndPointsTimeTaken,
+          capturedPoints: timerAndPointsPointsScored
         }
       });
       return;
@@ -332,7 +347,7 @@ export default function ScoringScreen() {
         console.log('Points Scored:', timerAndPointsPointsScored);
         console.log('Scoring Method:', scoringMethod);
         console.log('=========================================');
-        await GoogleAppsScriptService.addScore(gameName, participantName, timerAndPointsTimeTaken, timerAndPointsPointsScored);
+        await GoogleAppsScriptService.addScore(gameName, timerAndPointsTimeTaken, timerAndPointsPointsScored, participantName);
       } else {
         // For other games, send regular score
         console.log('=== SCORE SUBMISSION ===');
@@ -341,7 +356,7 @@ export default function ScoringScreen() {
         console.log('Score:', score);
         console.log('Scoring Method:', scoringMethod);
         console.log('========================');
-        await GoogleAppsScriptService.addScore(gameName, participantName, score);
+        await GoogleAppsScriptService.addScore(gameName, score, null, participantName);
       }
       
       Alert.alert(

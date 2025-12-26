@@ -25,7 +25,7 @@ export class GoogleSheetsService {
     }
   }
 
-  static async addScore(gameName, participantName, score, pointsScored = null) {
+  static async addScore(gameName, timeTaken, pointsScored, participantName) {
     try {
       const timestamp = new Date().toISOString();
 
@@ -37,7 +37,7 @@ export class GoogleSheetsService {
           action: 'addScore',
           gameName: gameName,
           participantName: participantName,
-          timeTaken: score, // score parameter contains timeTaken
+          timeTaken: timeTaken,
           pointsScored: pointsScored,
           timestamp: timestamp
         };
@@ -47,7 +47,7 @@ export class GoogleSheetsService {
           action: 'addScore',
           gameName: gameName,
           participantName: participantName,
-          score: score,
+          score: timeTaken,
           timestamp: timestamp
         };
         }
@@ -94,10 +94,10 @@ export class GoogleSheetsService {
 
 // Alternative approach using Google Apps Script (more secure)
 export class GoogleAppsScriptService {
-  static async addScore(gameName, participantName, score, pointsScored = null) {
+  static async addScore(gameName, timeTaken, pointsScored, participantName) {
     try {
       const timestamp = new Date().toISOString();
-      
+
       // Determine the request body based on whether this is a timerAndPoints game
       let requestBody;
       if (pointsScored !== null) {
@@ -106,7 +106,7 @@ export class GoogleAppsScriptService {
           action: 'addScore',
           gameName: gameName,
           participantName: participantName,
-          timeTaken: score, // score parameter contains timeTaken
+          timeTaken: timeTaken,
           pointsScored: pointsScored,
           timestamp: timestamp
         };
@@ -116,7 +116,7 @@ export class GoogleAppsScriptService {
           action: 'addScore',
           gameName: gameName,
           participantName: participantName,
-          score: score,
+          score: timeTaken,
           timestamp: timestamp
         };
       }

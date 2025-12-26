@@ -9,7 +9,7 @@ let participantCache = null;
 
 export default function ParticipantScreen() {
   const router = useRouter();
-  const { gameName, gameId, scoringMethod, capturedTime } = useLocalSearchParams();
+  const { gameName, gameId, scoringMethod, capturedTime, capturedPoints } = useLocalSearchParams();
   const [participantName, setParticipantName] = useState('');
   const [participants, setParticipants] = useState([]);
   const [filteredParticipants, setFilteredParticipants] = useState([]);
@@ -151,10 +151,10 @@ export default function ParticipantScreen() {
       setIsSubmitting(true);
       try {
         // Submit with time as the score and participant name
-        await GoogleAppsScriptService.addScore(gameName, participantName.trim(), capturedTime);
-        
+        await GoogleAppsScriptService.addScore(gameName, capturedTime, null, participantName.trim());
+
         Alert.alert(
-          'Success!', 
+          'Success!',
           `Race time submitted successfully!\n\nGame: ${gameName}\nParticipant: ${participantName.trim()}\nTime: ${capturedTime}`,
           [
             {
@@ -162,8 +162,8 @@ export default function ParticipantScreen() {
               onPress: () => {
                 router.push({
                   pathname: '/scoring',
-                  params: { 
-                    gameName: gameName, 
+                  params: {
+                    gameName: gameName,
                     gameId: gameId,
                     scoringMethod: scoringMethod
                   }
@@ -181,8 +181,65 @@ export default function ParticipantScreen() {
       } catch (error) {
         console.error('Submission error:', error);
         Alert.alert(
-          'Error', 
+          'Error',
           `Failed to submit race time: ${error.message}`,
+          [
+            {
+              text: 'Try Again',
+              onPress: () => {
+                setIsSubmitting(false);
+              }
+            },
+            {
+              text: 'Back to Games',
+              onPress: () => {
+                router.push('/');
+              }
+            }
+          ]
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // For timerAndPoints, submit with time, points, then participant
+    if (scoringMethod === 'timerAndPoints' && capturedTime && capturedPoints) {
+      setIsSubmitting(true);
+      try {
+        await GoogleAppsScriptService.addScore(gameName, capturedTime, capturedPoints, participantName.trim());
+
+        Alert.alert(
+          'Success!',
+          `Score submitted successfully!\n\nGame: ${gameName}\nParticipant: ${participantName.trim()}\nTime: ${capturedTime}\nPoints: ${capturedPoints}`,
+          [
+            {
+              text: 'Submit Another Score',
+              onPress: () => {
+                router.push({
+                  pathname: '/scoring',
+                  params: {
+                    gameName: gameName,
+                    gameId: gameId,
+                    scoringMethod: scoringMethod
+                  }
+                });
+              }
+            },
+            {
+              text: 'Back to Games',
+              onPress: () => {
+                router.push('/');
+              }
+            }
+          ]
+        );
+      } catch (error) {
+        console.error('Submission error:', error);
+        Alert.alert(
+          'Error',
+          `Failed to submit score: ${error.message}`,
           [
             {
               text: 'Try Again',
@@ -244,15 +301,22 @@ export default function ParticipantScreen() {
           <View style={styles.gameInfo}>
             <Text style={styles.gameName}>{gameName}</Text>
             <Text style={styles.gameSubtitle}>
-              {scoringMethod === 'timeRace' && capturedTime 
+              {scoringMethod === 'timeRace' && capturedTime
                 ? `Select participant for time: ${capturedTime}`
-                : 'Select or Add Participant'
+                : scoringMethod === 'timerAndPoints' && capturedTime && capturedPoints
+                  ? `Select participant for score`
+                  : 'Select or Add Participant'
               }
             </Text>
             {scoringMethod === 'timeRace' && capturedTime && (
               <View style={styles.capturedTimeContainer}>
                 <Text style={styles.capturedTimeLabel}>Captured Time:</Text>
                 <Text style={styles.capturedTimeValue}>{capturedTime}</Text>
+              </View>
+            )}
+            {scoringMethod === 'timerAndPoints' && capturedTime && capturedPoints && (
+              <View style={styles.capturedTimeContainer}>
+                <Text style={styles.capturedTimeLabel}>Time: {capturedTime} | Points: {capturedPoints}</Text>
               </View>
             )}
           </View>
@@ -334,18 +398,20 @@ export default function ParticipantScreen() {
             disabled={!participantName.trim() || isSubmitting}
           >
             <Text style={styles.continueButtonText}>
-              {isSubmitting 
-                ? 'Submitting...' 
-                : scoringMethod === 'timeRace' 
-                  ? 'Submit Race Time' 
-                  : 'Continue to Scoring'
+              {isSubmitting
+                ? 'Submitting...'
+                : scoringMethod === 'timeRace'
+                  ? 'Submit Race Time'
+                  : scoringMethod === 'timerAndPoints'
+                    ? 'Submit Score'
+                    : 'Continue to Scoring'
               }
             </Text>
             {!isSubmitting && (
-              <Ionicons 
-                name={scoringMethod === 'timeRace' ? 'checkmark' : 'arrow-forward'} 
-                size={20} 
-                color="#fff" 
+              <Ionicons
+                name={scoringMethod === 'timeRace' || scoringMethod === 'timerAndPoints' ? 'checkmark' : 'arrow-forward'}
+                size={20}
+                color="#fff"
               />
             )}
           </TouchableOpacity>

@@ -108,7 +108,7 @@ export default function GameSelectionScreen() {
   };
 
   const handleGameSelect = (game) => {
-    if (game.scoringMethod === 'timeRace') {
+    if (game.scoringMethod === 'timeRace' || game.scoringMethod === 'timerAndPoints') {
       router.push({
         pathname: '/scoring',
         params: {
