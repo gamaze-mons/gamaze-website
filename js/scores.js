@@ -46,10 +46,14 @@ async function fetchSheetData(sheetName) {
 
             if (rows.length > 0) {
                 const firstRow = rows[0];
-                const headerKeywords = ['name', 'photo', 'score', 'date', 'time', 'participant', 'url'];
-                const looksLikeHeaders = firstRow.some(cell =>
-                    typeof cell === 'string' && headerKeywords.some(kw => cell.toLowerCase().includes(kw))
-                );
+                const headerKeywords = ['name', 'photo', 'score', 'datetime', 'timetaken', 'pointsscored', 'participant', 'url'];
+                const looksLikeHeaders = firstRow.some(cell => {
+                    if (typeof cell !== 'string') return false;
+                    const cellLower = cell.toLowerCase().replace(/\s+/g, '');
+                    // Exclude Google Sheets Date format like Date(1899,11,30,...)
+                    if (/^date\(\d+,\d+,\d+/.test(cellLower)) return false;
+                    return headerKeywords.some(kw => cellLower.includes(kw));
+                });
 
                 if (looksLikeHeaders) {
                     headers = firstRow.map(h => String(h));
@@ -145,19 +149,41 @@ async function loadGameData() {
         const { data, actualName } = await fetchSheetDataFlexible(gameName);
 
         if (data.rows.length > 0) {
+            // Debug: Log headers to see what columns exist
+            console.log(`=== ${actualName} Headers ===`, data.headers);
+
             const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
             const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points']);
+
+            // Check for timerAndPoints game (has both TimeTaken and PointsScored columns)
+            const timeIdx = findColumnIndexExact(data.headers, ['TimeTaken', 'Time Taken', 'Time']);
+            const pointsIdx = findColumnIndexExact(data.headers, ['PointsScored', 'Points Scored']);
+            const isTimerAndPoints = timeIdx !== -1 && pointsIdx !== -1;
+
+            console.log(`${actualName}: timeIdx=${timeIdx}, pointsIdx=${pointsIdx}, isTimerAndPoints=${isTimerAndPoints}`);
 
             const participants = data.rows
                 .map(row => {
                     const name = row[nameIdx] || '';
-                    const rawScore = row[scoreIdx];
-                    const score = parseScore(rawScore);
                     const photoKey = name.toLowerCase().trim();
                     const photo = participantsData[photoKey] ||
                         `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1a237e&color=fff&size=150`;
 
-                    return { name, score, rawScore, photo };
+                    if (isTimerAndPoints) {
+                        // timerAndPoints game - read both columns
+                        const rawTime = row[timeIdx];
+                        const rawPoints = row[pointsIdx];
+                        const points = parseFloat(rawPoints) || 0;
+                        const timeSeconds = parseTimeToSeconds(rawTime);
+                        // Score: points dominate, lower time wins tiebreaker
+                        const score = points * 10000 - timeSeconds;
+                        return { name, score, rawTime, rawPoints: points, isTimerAndPoints: true, photo };
+                    } else {
+                        // Regular game - single score column
+                        const rawScore = row[scoreIdx];
+                        const score = parseScore(rawScore);
+                        return { name, score, rawScore, isTimerAndPoints: false, photo };
+                    }
                 })
                 .filter(p => p.name)
                 .sort((a, b) => b.score - a.score)
@@ -166,11 +192,78 @@ async function loadGameData() {
             if (participants.length > 0) {
                 gamesData.push({
                     gameName: actualName,
-                    participants
+                    participants,
+                    isTimerAndPoints
                 });
             }
         }
     }
+}
+
+// Helper: Find column index (exact match only, returns -1 if not found)
+function findColumnIndexExact(headers, possibleNames) {
+    for (let i = 0; i < headers.length; i++) {
+        const header = headers[i].toLowerCase().trim().replace(/\s+/g, '');
+        for (const name of possibleNames) {
+            const normalizedName = name.toLowerCase().replace(/\s+/g, '');
+            if (header === normalizedName) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+// Helper: Check if a value is a time format (MM:SS or Google Sheets Date)
+function isTimeValue(rawScore) {
+    if (rawScore === null || rawScore === undefined || rawScore === '') {
+        return false;
+    }
+
+    const scoreStr = String(rawScore).trim();
+
+    // Check for Google Sheets Date format
+    if (/^Date\(\d+,\d+,\d+,\d+,\d+,\d+\)$/i.test(scoreStr)) {
+        return true;
+    }
+
+    // Check for MM:SS format
+    if (/^\d{1,2}:\d{2}$/.test(scoreStr)) {
+        return true;
+    }
+
+    return false;
+}
+
+// Helper: Parse time value to seconds
+function parseTimeToSeconds(rawTime) {
+    if (rawTime === null || rawTime === undefined || rawTime === '') {
+        return 0;
+    }
+
+    const timeStr = String(rawTime).trim();
+
+    // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
+    // Reinterpret: hours→minutes, minutes→seconds (see formatScoreForDisplay comment)
+    const dateMatch = timeStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
+    if (dateMatch) {
+        const hours = parseInt(dateMatch[1]) || 0;
+        const minutes = parseInt(dateMatch[2]) || 0;
+        // Reinterpret: hours as minutes, minutes as seconds
+        return hours * 60 + minutes;
+    }
+
+    // Handle MM:SS format
+    const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch) {
+        const mins = parseInt(timeMatch[1]) || 0;
+        const secs = parseInt(timeMatch[2]) || 0;
+        return mins * 60 + secs;
+    }
+
+    // Try parsing as plain number (seconds)
+    const numTime = parseFloat(timeStr);
+    return isNaN(numTime) ? 0 : numTime;
 }
 
 // Helper: Find column index
@@ -197,12 +290,18 @@ function parseScore(rawScore) {
 
     // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
     // This is how Google Sheets returns time values via the API
+    // NOTE: Google Sheets interprets "00:06" as HH:MM (0 hours, 6 minutes)
+    // but mobile app sends it as MM:SS (0 minutes, 6 seconds)
+    // So we reinterpret: hours→minutes, minutes→seconds
     const dateMatch = scoreStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
     if (dateMatch) {
         const hours = parseInt(dateMatch[1]) || 0;
         const minutes = parseInt(dateMatch[2]) || 0;
         const seconds = parseInt(dateMatch[3]) || 0;
-        const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+        // Reinterpret: treat hours as minutes, minutes as seconds
+        const actualMinutes = hours;
+        const actualSeconds = minutes;
+        const totalSeconds = actualMinutes * 60 + actualSeconds;
         // Return negative so lower time ranks higher in descending sort
         return -totalSeconds;
     }
@@ -243,16 +342,17 @@ function formatScoreForDisplay(rawScore) {
     const scoreStr = String(rawScore).trim();
 
     // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
+    // NOTE: Google Sheets interprets "00:06" as HH:MM (0 hours, 6 minutes)
+    // but mobile app sends it as MM:SS (0 minutes, 6 seconds)
+    // So we reinterpret: hours→minutes, minutes→seconds
     const dateMatch = scoreStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
     if (dateMatch) {
         const hours = parseInt(dateMatch[1]) || 0;
         const minutes = parseInt(dateMatch[2]) || 0;
-        const seconds = parseInt(dateMatch[3]) || 0;
-        // Format as MM:SS or HH:MM:SS
-        if (hours > 0) {
-            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-        }
-        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        // Reinterpret: treat hours as minutes, minutes as seconds
+        const actualMinutes = hours;
+        const actualSeconds = minutes;
+        return `${actualMinutes.toString().padStart(2, '0')}:${actualSeconds.toString().padStart(2, '0')}`;
     }
 
     // Return as-is for other formats
@@ -301,16 +401,37 @@ function renderCurrentGame() {
     }, 50);
 
     // Render participant cards (photo + name + score in each card)
-    participantsRow.innerHTML = game.participants.map(p => `
-        <div class="participant-card">
-            <div class="participant-photo">
-                <img src="${p.photo}" alt="${p.name}"
-                     onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
+    participantsRow.innerHTML = game.participants.map(p => {
+        let scoreDisplay;
+        if (p.isTimerAndPoints) {
+            // timerAndPoints game - show both Points and Time
+            const formattedTime = formatScoreForDisplay(p.rawTime);
+            scoreDisplay = `
+                <div class="participant-score">Points: ${p.rawPoints}</div>
+                <div class="participant-score">Time: ${formattedTime}</div>
+            `;
+        } else {
+            // Regular game - check if it's a time or points value
+            const formattedScore = formatScoreForDisplay(p.rawScore);
+            const isTimeFormat = isTimeValue(p.rawScore);
+            if (isTimeFormat) {
+                scoreDisplay = `<div class="participant-score">Time: ${formattedScore}</div>`;
+            } else {
+                scoreDisplay = `<div class="participant-score">Points: ${formattedScore}</div>`;
+            }
+        }
+
+        return `
+            <div class="participant-card">
+                <div class="participant-photo">
+                    <img src="${p.photo}" alt="${p.name}"
+                         onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
+                </div>
+                <div class="participant-name">${p.name}</div>
+                ${scoreDisplay}
             </div>
-            <div class="participant-name">${p.name}</div>
-            <div class="participant-score">Score: ${formatScoreForDisplay(p.rawScore)}</div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 
     // Hide score table
     scoreTable.innerHTML = '';
