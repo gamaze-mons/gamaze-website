@@ -8,7 +8,7 @@ const config = {
     gameSheets: [],
     slideDuration: 8000, // 8 seconds per slide
     topParticipants: 5, // Show top 5 per game
-    refreshInterval: 30000
+    refreshInterval: 1000 // 1 second - live refresh
 };
 
 // State
@@ -28,7 +28,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ===== Google Sheets Data Fetching =====
 async function fetchSheetData(sheetName) {
-    const url = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+    // Add cache-busting timestamp to prevent caching
+    const cacheBuster = Date.now();
+    const url = `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}&_cb=${cacheBuster}`;
 
     try {
         const response = await fetch(url);
