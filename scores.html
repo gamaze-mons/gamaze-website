@@ -92,6 +92,39 @@
                     <span id="durationValue">8s</span>
                 </div>
             </div>
+
+            <h3>Slides to Show</h3>
+            <div class="setting-item">
+                <label>Top per game</label>
+                <input type="checkbox" class="display-toggle" data-config="showTopperPerGameOverall" checked>
+            </div>
+            <div class="setting-item">
+                <label>Overall toppers</label>
+                <input type="checkbox" class="display-toggle" data-config="showOverallToppers" checked>
+            </div>
+            <div class="setting-item">
+                <label>Team rankings</label>
+                <input type="checkbox" class="display-toggle" data-config="showTeamRanks" checked>
+            </div>
+            <div class="setting-item">
+                <label>Best per team</label>
+                <input type="checkbox" class="display-toggle" data-config="showToppersPerTeam" checked>
+            </div>
+            <div class="setting-item">
+                <label>Best per team per game</label>
+                <input type="checkbox" class="display-toggle" data-config="showTopperPerTeamPerGame">
+            </div>
+
+            <h3>Rank Counts</h3>
+            <div class="setting-item">
+                <label>Teams to show</label>
+                <input type="number" class="rank-count" data-config="teamRankCount" min="1" max="50" value="5">
+            </div>
+            <div class="setting-item">
+                <label>Individuals to show</label>
+                <input type="number" class="rank-count" data-config="individualRankCount" min="1" max="50" value="5">
+            </div>
+
             <div class="setting-item">
                 <button id="refreshData" class="btn-refresh">
                     <i class="fas fa-sync"></i> Refresh Data

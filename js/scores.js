@@ -1,67 +1,99 @@
 // ===== GAMAZE Carnival Scores Display System =====
+// With team support, rank-based scoring, and configurable display
 
 // Configuration
 const config = {
     spreadsheetId: '1C-07WttxU_PgzzobzYYjtwgYqOT3MIetkAsraShi5Us',
-    apiKey: 'AIzaSyBHVyP4qX3-WA2t3lIo14KK3Nbg5aY6MGs', // Google Sheets API key
+    apiKey: 'AIzaSyBHVyP4qX3-WA2t3lIo14KK3Nbg5aY6MGs',
     participantsSheet: 'Participants',
     gamesListSheet: 'GamesList',
     gameSheets: [],
-    slideDuration: 8000, // 8 seconds per slide
-    topParticipants: 5, // Show top 5 per game
-    participantsRefreshInterval: 60000 // Refresh participants every 60 seconds
+    slideDuration: 8000,
+    topParticipants: 5,
+    participantsRefreshInterval: 60000,
+
+    // Display flags
+    showTopperPerGameOverall: true,
+    showOverallToppers: true,
+    showTeamRanks: true,
+    showToppersPerTeam: true,
+    showTopperPerTeamPerGame: false,
+
+    // Rank counts
+    teamRankCount: 5,
+    individualRankCount: 5
 };
 
 // State
-let currentGameIndex = 0;
-let gamesData = []; // Cache for game data
+let allSlides = [];
+let currentSlideIndex = 0;
+let gamesData = [];
 let participantsData = {};
+let teamRankings = [];
 let isPlaying = true;
 let slideInterval;
-let currentGameRefreshInterval; // Refresh current game periodically
 
-// Initialize
+// ===== Settings Persistence =====
+const SETTINGS_KEY = 'gamaze_display_settings';
+
+function saveSettings() {
+    const settings = {
+        slideDuration: config.slideDuration,
+        showTopperPerGameOverall: config.showTopperPerGameOverall,
+        showOverallToppers: config.showOverallToppers,
+        showTeamRanks: config.showTeamRanks,
+        showToppersPerTeam: config.showToppersPerTeam,
+        showTopperPerTeamPerGame: config.showTopperPerTeamPerGame,
+        teamRankCount: config.teamRankCount,
+        individualRankCount: config.individualRankCount
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function loadSettings() {
+    try {
+        const saved = localStorage.getItem(SETTINGS_KEY);
+        if (saved) {
+            const settings = JSON.parse(saved);
+            Object.keys(settings).forEach(key => {
+                if (config[key] !== undefined) config[key] = settings[key];
+            });
+        }
+    } catch (e) {
+        console.warn('Failed to load settings:', e);
+    }
+}
+
+// ===== Initialize =====
 document.addEventListener('DOMContentLoaded', function() {
+    loadSettings();
     initializeControls();
     showLoading(true);
-    loadInitialData();
-    // Refresh participants periodically (photos might change)
-    setInterval(loadParticipants, config.participantsRefreshInterval);
+    loadAllData();
+    setInterval(loadAllData, config.participantsRefreshInterval);
 });
 
-// ===== Google Sheets Data Fetching (Using Sheets API v4) =====
+// ===== Google Sheets API =====
 async function fetchSheetData(sheetName) {
-    // Using Google Sheets API v4 for real-time data (no caching)
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetName)}?key=${config.apiKey}`;
-
-    console.log(`Fetching: ${sheetName}`);
-
     try {
         const response = await fetch(url);
         const data = await response.json();
-
-        console.log(`Response for "${sheetName}":`, data);
-
         if (data.error) {
-            console.error(`API Error for "${sheetName}":`, data.error.message, data.error);
+            console.error(`API Error for "${sheetName}":`, data.error.message);
             return { headers: [], rows: [] };
         }
-
         if (data.values && data.values.length > 0) {
-            // First row is headers, rest are data rows
-            const headers = data.values[0];
-            const rows = data.values.slice(1);
-            console.log(`Got ${rows.length} rows from "${sheetName}"`);
-            return { headers, rows };
+            return { headers: data.values[0], rows: data.values.slice(1) };
         }
         return { headers: [], rows: [] };
     } catch (error) {
-        console.error(`Error fetching sheet "${sheetName}":`, error);
+        console.error(`Error fetching "${sheetName}":`, error);
         return { headers: [], rows: [] };
     }
 }
 
-// Load participants (name -> photo mapping)
+// ===== Data Loading =====
 async function loadParticipants() {
     const data = await fetchSheetData(config.participantsSheet);
     participantsData = {};
@@ -69,27 +101,27 @@ async function loadParticipants() {
     if (data.rows.length > 0) {
         const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
         const photoIdx = findColumnIndex(data.headers, ['PhotoUrl', 'Photo URL', 'Photo', 'URL', 'PhotoURL']);
+        const teamIdx = findColumnIndex(data.headers, ['Team'], -1);
 
         data.rows.forEach(row => {
             const name = row[nameIdx] || '';
             let photo = row[photoIdx] || '';
+            const team = (teamIdx >= 0 && row[teamIdx]) ? row[teamIdx] : '';
 
             if (photo && photo.includes('drive.google.com')) {
                 const fileIdMatch = photo.match(/\/d\/([a-zA-Z0-9_-]+)/);
                 if (fileIdMatch) {
-                    // Use lh3.googleusercontent.com - works for embedding
                     photo = `https://lh3.googleusercontent.com/d/${fileIdMatch[1]}`;
                 }
             }
 
             if (name) {
-                participantsData[name.toLowerCase().trim()] = photo;
+                participantsData[name.toLowerCase().trim()] = { photo, team };
             }
         });
     }
 }
 
-// Load game sheets list
 async function loadGamesList() {
     const data = await fetchSheetData(config.gamesListSheet);
     config.gameSheets = [];
@@ -98,516 +130,369 @@ async function loadGamesList() {
         data.rows.forEach(row => {
             const gameName = row[0];
             if (gameName && gameName.trim()) {
-                config.gameSheets.push(gameName.trim());
+                const scoringMethod = (row[2] || 'points').toString().toLowerCase().trim();
+                const sortOrder = (scoringMethod === 'stopwatch' || scoringMethod === 'timerace') ? 'asc' : 'desc';
+                config.gameSheets.push({ name: gameName.trim(), sortOrder, scoringMethod });
             }
         });
     }
 }
 
-// Fetch sheet data (single request - sheet names are case-sensitive in API)
-async function fetchSheetDataFlexible(sheetName) {
-    const normalized = sheetName.trim();
-    const data = await fetchSheetData(normalized);
-    return { data, actualName: normalized };
+async function loadGameData() {
+    gamesData = [];
+
+    for (const gameConfig of config.gameSheets) {
+        const data = await fetchSheetData(gameConfig.name);
+        if (data.rows.length === 0) continue;
+
+        const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
+        const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points', 'PointsScored']);
+        const timeIdx = findColumnIndex(data.headers, ['TimeTaken'], -1);
+        const pointsIdx = findColumnIndex(data.headers, ['PointsScored'], -1);
+        const isTimerAndPoints = gameConfig.scoringMethod === 'timerandpoints' && timeIdx >= 0 && pointsIdx >= 0;
+
+        const participants = data.rows
+            .map(row => {
+                const name = row[nameIdx] || '';
+                const photoKey = name.toLowerCase().trim();
+                const pData = participantsData[photoKey];
+                const photo = (pData && pData.photo) || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1a237e&color=fff&size=150`;
+                const team = (pData && pData.team) || '';
+
+                const rawScore = row[scoreIdx];
+                const rawTime = timeIdx >= 0 ? row[timeIdx] : null;
+                const rawPoints = pointsIdx >= 0 ? row[pointsIdx] : null;
+                const points = rawPoints !== null ? (parseFloat(rawPoints) || 0) : parseScoreNumeric(rawScore);
+                const time = rawTime !== null ? parseTimeToSeconds(rawTime) : parseTimeFromScore(rawScore);
+
+                return { name, points, time, rawScore, rawTime, photo, team, isTimerAndPoints };
+            })
+            .filter(p => p.name);
+
+        if (isTimerAndPoints) {
+            participants.sort((a, b) => b.points !== a.points ? b.points - a.points : a.time - b.time);
+        } else if (gameConfig.sortOrder === 'asc') {
+            participants.sort((a, b) => a.time - b.time);
+        } else {
+            participants.sort((a, b) => b.points - a.points);
+        }
+
+        participants.forEach((p, idx) => { p.rank = idx + 1; });
+
+        if (participants.length > 0) {
+            gamesData.push({
+                gameName: gameConfig.name,
+                participants,
+                scoringMethod: gameConfig.scoringMethod,
+                sortOrder: gameConfig.sortOrder
+            });
+        }
+    }
+
+    calculateTeamScores();
 }
 
-// Helper: Find column index (exact match only, returns -1 if not found)
-function findColumnIndexExact(headers, possibleNames) {
+// ===== Score Parsing =====
+function parseScoreNumeric(rawScore) {
+    if (!rawScore) return 0;
+    const str = String(rawScore).trim();
+    const dateMatch = str.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
+    if (dateMatch) return parseInt(dateMatch[1]) * 60 + parseInt(dateMatch[2]);
+    const timeMatch = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch) return parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
+    return parseFloat(str) || 0;
+}
+
+function parseTimeToSeconds(rawTime) {
+    if (!rawTime) return 0;
+    const str = String(rawTime).trim();
+    const dateMatch = str.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
+    if (dateMatch) return parseInt(dateMatch[1]) * 60 + parseInt(dateMatch[2]);
+    const timeMatch = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch) return parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
+    return parseFloat(str) || 0;
+}
+
+function parseTimeFromScore(rawScore) {
+    if (!rawScore) return 0;
+    const str = String(rawScore).trim();
+    const dateMatch = str.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
+    if (dateMatch) return parseInt(dateMatch[1]) * 60 + parseInt(dateMatch[2]);
+    const timeMatch = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch) return parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
+    return 0;
+}
+
+function formatScoreForDisplay(p, game) {
+    if (p.isTimerAndPoints) {
+        const mins = Math.floor(p.time / 60);
+        const secs = p.time % 60;
+        return `Points: ${p.points} | Time: ${mins}:${String(secs).padStart(2, '0')}`;
+    }
+    if (game.sortOrder === 'asc') {
+        const mins = Math.floor(p.time / 60);
+        const secs = p.time % 60;
+        return `Time: ${mins}:${String(secs).padStart(2, '0')}`;
+    }
+    return `Points: ${p.points}`;
+}
+
+// ===== Column Helper =====
+function findColumnIndex(headers, possibleNames, defaultIdx) {
     for (let i = 0; i < headers.length; i++) {
         const header = headers[i].toLowerCase().trim().replace(/\s+/g, '');
         for (const name of possibleNames) {
-            const normalizedName = name.toLowerCase().replace(/\s+/g, '');
-            if (header === normalizedName) {
-                return i;
-            }
+            if (header === name.toLowerCase().replace(/\s+/g, '')) return i;
         }
     }
-    return -1;
-}
-
-// Helper: Check if a value is a time format (MM:SS or Google Sheets Date)
-function isTimeValue(rawScore) {
-    if (rawScore === null || rawScore === undefined || rawScore === '') {
-        return false;
-    }
-
-    const scoreStr = String(rawScore).trim();
-
-    // Check for Google Sheets Date format
-    if (/^Date\(\d+,\d+,\d+,\d+,\d+,\d+\)$/i.test(scoreStr)) {
-        return true;
-    }
-
-    // Check for MM:SS format
-    if (/^\d{1,2}:\d{2}$/.test(scoreStr)) {
-        return true;
-    }
-
-    return false;
-}
-
-// Helper: Parse time value to seconds
-function parseTimeToSeconds(rawTime) {
-    if (rawTime === null || rawTime === undefined || rawTime === '') {
-        return 0;
-    }
-
-    const timeStr = String(rawTime).trim();
-
-    // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
-    // Reinterpret: hours→minutes, minutes→seconds (see formatScoreForDisplay comment)
-    const dateMatch = timeStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
-    if (dateMatch) {
-        const hours = parseInt(dateMatch[1]) || 0;
-        const minutes = parseInt(dateMatch[2]) || 0;
-        // Reinterpret: hours as minutes, minutes as seconds
-        return hours * 60 + minutes;
-    }
-
-    // Handle MM:SS format
-    const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
-    if (timeMatch) {
-        const mins = parseInt(timeMatch[1]) || 0;
-        const secs = parseInt(timeMatch[2]) || 0;
-        return mins * 60 + secs;
-    }
-
-    // Try parsing as plain number (seconds)
-    const numTime = parseFloat(timeStr);
-    return isNaN(numTime) ? 0 : numTime;
-}
-
-// Helper: Find column index
-function findColumnIndex(headers, possibleNames) {
-    for (let i = 0; i < headers.length; i++) {
-        const header = headers[i].toLowerCase().trim();
-        for (const name of possibleNames) {
-            if (header === name.toLowerCase() || header.includes(name.toLowerCase())) {
-                return i;
-            }
-        }
-    }
+    if (defaultIdx !== undefined) return defaultIdx;
     return possibleNames.includes('Score') ? 1 : 0;
 }
 
-// Helper: Parse score - handles numeric, MM:SS time format, Google Sheets Date format, and timer+points format
-// Returns a numeric value for sorting (higher = better rank)
-function parseScore(rawScore) {
-    if (rawScore === null || rawScore === undefined || rawScore === '') {
-        return 0;
-    }
-
-    const scoreStr = String(rawScore).trim();
-
-    // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
-    // This is how Google Sheets returns time values via the API
-    // NOTE: Google Sheets interprets "00:06" as HH:MM (0 hours, 6 minutes)
-    // but mobile app sends it as MM:SS (0 minutes, 6 seconds)
-    // So we reinterpret: hours→minutes, minutes→seconds
-    const dateMatch = scoreStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
-    if (dateMatch) {
-        const hours = parseInt(dateMatch[1]) || 0;
-        const minutes = parseInt(dateMatch[2]) || 0;
-        const seconds = parseInt(dateMatch[3]) || 0;
-        // Reinterpret: treat hours as minutes, minutes as seconds
-        const actualMinutes = hours;
-        const actualSeconds = minutes;
-        const totalSeconds = actualMinutes * 60 + actualSeconds;
-        // Return negative so lower time ranks higher in descending sort
-        return -totalSeconds;
-    }
-
-    // Handle "MM:SS - Xpts" format (timerAndPoints)
-    // Sort by points first, then by time (lower time = better)
-    const timerPointsMatch = scoreStr.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d+)\s*pts?$/i);
-    if (timerPointsMatch) {
-        const minutes = parseInt(timerPointsMatch[1]) || 0;
-        const seconds = parseInt(timerPointsMatch[2]) || 0;
-        const points = parseInt(timerPointsMatch[3]) || 0;
-        const totalSeconds = minutes * 60 + seconds;
-        // Points * 10000 dominates, subtract seconds so lower time wins tiebreaker
-        return points * 10000 - totalSeconds;
-    }
-
-    // Handle MM:SS time format (stopwatch/timeRace) - lower time = better
-    const timeMatch = scoreStr.match(/^(\d{1,2}):(\d{2})$/);
-    if (timeMatch) {
-        const minutes = parseInt(timeMatch[1]) || 0;
-        const seconds = parseInt(timeMatch[2]) || 0;
-        const totalSeconds = minutes * 60 + seconds;
-        // Return negative so lower time ranks higher in descending sort
-        return -totalSeconds;
-    }
-
-    // Handle plain numeric score (higher = better)
-    const numScore = parseFloat(scoreStr);
-    return isNaN(numScore) ? 0 : numScore;
-}
-
-// Helper: Format raw score for display
-function formatScoreForDisplay(rawScore) {
-    if (rawScore === null || rawScore === undefined || rawScore === '') {
-        return '0';
-    }
-
-    const scoreStr = String(rawScore).trim();
-
-    // Handle Google Sheets Date format: Date(1899,11,30,hours,minutes,seconds)
-    // NOTE: Google Sheets interprets "00:06" as HH:MM (0 hours, 6 minutes)
-    // but mobile app sends it as MM:SS (0 minutes, 6 seconds)
-    // So we reinterpret: hours→minutes, minutes→seconds
-    const dateMatch = scoreStr.match(/^Date\(\d+,\d+,\d+,(\d+),(\d+),(\d+)\)$/i);
-    if (dateMatch) {
-        const hours = parseInt(dateMatch[1]) || 0;
-        const minutes = parseInt(dateMatch[2]) || 0;
-        // Reinterpret: treat hours as minutes, minutes as seconds
-        const actualMinutes = hours;
-        const actualSeconds = minutes;
-        return `${actualMinutes.toString().padStart(2, '0')}:${actualSeconds.toString().padStart(2, '0')}`;
-    }
-
-    // Return as-is for other formats
-    return scoreStr;
-}
-
-// Load initial data (GamesList + Participants only)
-async function loadInitialData() {
-    try {
-        await loadGamesList();
-        await loadParticipants();
-        showLoading(false);
-
-        if (config.gameSheets.length > 0) {
-            // Load first game and start slideshow
-            await loadAndShowGame(0);
-            if (isPlaying) {
-                startSlideshow();
-            }
-        } else {
-            showNoData();
-        }
-    } catch (error) {
-        console.error('Error loading initial data:', error);
-        showLoading(false);
-        showError();
-    }
-}
-
-// Load a single game's data and display it
-async function loadAndShowGame(gameIndex) {
-    if (config.gameSheets.length === 0) return;
-
-    const gameName = config.gameSheets[gameIndex];
-    console.log(`Loading game: ${gameName}`);
-
-    try {
-        const { data, actualName } = await fetchSheetDataFlexible(gameName);
-
-        if (data.rows.length > 0) {
-            const gameData = processGameData(data, actualName);
-            if (gameData) {
-                // Update cache for this game
-                gamesData[gameIndex] = gameData;
-                currentGameIndex = gameIndex;
-                renderCurrentGame();
-                return;
-            }
-        }
-
-        // If no data but we have cached data, show cached
-        if (gamesData[gameIndex]) {
-            currentGameIndex = gameIndex;
-            renderCurrentGame();
-            console.log(`Using cached data for: ${gameName}`);
-        }
-    } catch (error) {
-        console.error(`Error loading game ${gameName}:`, error);
-        // On error, try to show cached data
-        if (gamesData[gameIndex]) {
-            currentGameIndex = gameIndex;
-            renderCurrentGame();
-            console.log(`Using cached data due to error for: ${gameName}`);
-        }
-    }
-}
-
-// Process game data from sheet
-function processGameData(data, gameName) {
-    const nameIdx = findColumnIndex(data.headers, ['ParticipantName', 'Name', 'Participant']);
-    const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points']);
-
-    // Check for timerAndPoints game
-    const timeIdx = findColumnIndexExact(data.headers, ['TimeTaken', 'Time Taken', 'Time']);
-    const pointsIdx = findColumnIndexExact(data.headers, ['PointsScored', 'Points Scored']);
-    const isTimerAndPoints = timeIdx !== -1 && pointsIdx !== -1;
-
-    const participants = data.rows
-        .map(row => {
-            const name = row[nameIdx] || '';
-            const photoKey = name.toLowerCase().trim();
-            const photo = participantsData[photoKey] ||
-                `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1a237e&color=fff&size=150`;
-
-            if (isTimerAndPoints) {
-                const rawTime = row[timeIdx];
-                const rawPoints = row[pointsIdx];
-                const points = parseFloat(rawPoints) || 0;
-                const timeSeconds = parseTimeToSeconds(rawTime);
-                const score = points * 10000 - timeSeconds;
-                return { name, score, rawTime, rawPoints: points, isTimerAndPoints: true, photo };
-            } else {
-                const rawScore = row[scoreIdx];
-                const score = parseScore(rawScore);
-                return { name, score, rawScore, isTimerAndPoints: false, photo };
-            }
-        })
-        .filter(p => p.name)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, config.topParticipants);
-
-    if (participants.length > 0) {
-        return { gameName, participants, isTimerAndPoints };
-    }
-    return null;
-}
-
-// ===== Render Functions =====
-function renderCurrentGame() {
-    if (gamesData.length === 0) return;
-
-    const game = gamesData[currentGameIndex];
-    const gameNameEl = document.getElementById('gameName');
-    const participantsRow = document.getElementById('participantsRow');
-    const scoreTable = document.getElementById('scoreTable');
-
-    // Update game name
-    gameNameEl.textContent = game.gameName.toUpperCase();
-    gameNameEl.style.opacity = 0;
-    setTimeout(() => {
-        gameNameEl.style.transition = 'opacity 0.5s ease';
-        gameNameEl.style.opacity = 1;
-    }, 50);
-
-    // Render participant cards (photo + name + score in each card)
-    participantsRow.innerHTML = game.participants.map(p => {
-        let scoreDisplay;
-        if (p.isTimerAndPoints) {
-            // timerAndPoints game - show both Points and Time
-            const formattedTime = formatScoreForDisplay(p.rawTime);
-            scoreDisplay = `
-                <div class="participant-score">Points: ${p.rawPoints}</div>
-                <div class="participant-score">Time: ${formattedTime}</div>
-            `;
-        } else {
-            // Regular game - check if it's a time or points value
-            const formattedScore = formatScoreForDisplay(p.rawScore);
-            const isTimeFormat = isTimeValue(p.rawScore);
-            if (isTimeFormat) {
-                scoreDisplay = `<div class="participant-score">Time: ${formattedScore}</div>`;
-            } else {
-                scoreDisplay = `<div class="participant-score">Points: ${formattedScore}</div>`;
-            }
-        }
-
-        return `
-            <div class="participant-card">
-                <div class="participant-photo">
-                    <img src="${p.photo}" alt="${p.name}"
-                         onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
-                </div>
-                <div class="participant-name">${p.name}</div>
-                ${scoreDisplay}
-            </div>
-        `;
-    }).join('');
-
-    // Hide score table
-    scoreTable.innerHTML = '';
-}
-
-async function nextGame() {
-    if (config.gameSheets.length === 0) return;
-    const nextIndex = (currentGameIndex + 1) % config.gameSheets.length;
-    await loadAndShowGame(nextIndex);
-}
-
-async function prevGame() {
-    if (config.gameSheets.length === 0) return;
-    const prevIndex = (currentGameIndex - 1 + config.gameSheets.length) % config.gameSheets.length;
-    await loadAndShowGame(prevIndex);
-}
-
-// ===== Slideshow Controls =====
-function startSlideshow() {
-    if (isPlaying && config.gameSheets.length > 1) {
-        slideInterval = setInterval(nextGame, config.slideDuration);
-    }
-    // Also start refreshing current game data periodically
-    startCurrentGameRefresh();
-}
-
-function stopSlideshow() {
-    clearInterval(slideInterval);
-}
-
-// Refresh current game data periodically (even when paused)
-function startCurrentGameRefresh() {
-    // Clear any existing interval
-    if (currentGameRefreshInterval) {
-        clearInterval(currentGameRefreshInterval);
-    }
-    // Refresh current game every 5 seconds
-    currentGameRefreshInterval = setInterval(() => {
-        if (config.gameSheets.length > 0) {
-            refreshCurrentGame();
-        }
-    }, 5000);
-}
-
-// Refresh only the currently displayed game
-async function refreshCurrentGame() {
-    if (config.gameSheets.length === 0) return;
-
-    const gameName = config.gameSheets[currentGameIndex];
-    console.log(`Refreshing current game: ${gameName}`);
-
-    try {
-        const { data, actualName } = await fetchSheetDataFlexible(gameName);
-
-        if (data.rows.length > 0) {
-            const gameData = processGameData(data, actualName);
-            if (gameData) {
-                gamesData[currentGameIndex] = gameData;
-                renderCurrentGame();
-            }
-        }
-    } catch (error) {
-        console.error(`Error refreshing game ${gameName}:`, error);
-        // Keep showing cached data on error
-    }
-}
-
-function togglePlayPause() {
-    isPlaying = !isPlaying;
-    const btn = document.getElementById('playPauseBtn');
-
-    // Always keep current game refresh running (even when paused)
-    startCurrentGameRefresh();
-    btn.innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
-
-    if (isPlaying) {
-        startSlideshow();
-    } else {
-        stopSlideshow();
-    }
-}
-
-// ===== UI Helpers =====
-function showLoading(show) {
-    const loadingState = document.getElementById('loadingState');
-    if (loadingState) {
-        loadingState.classList.toggle('show', show);
-    }
-}
-
-function showNoData() {
-    const gameNameEl = document.getElementById('gameName');
-    const participantsRow = document.getElementById('participantsRow');
-    const scoreTable = document.getElementById('scoreTable');
-
-    gameNameEl.textContent = 'NO DATA AVAILABLE';
-    participantsRow.innerHTML = '';
-    scoreTable.innerHTML = '<div class="score-cell" style="color: #666;">No game data found</div>';
-}
-
-function showError() {
-    const gameNameEl = document.getElementById('gameName');
-    gameNameEl.textContent = 'ERROR LOADING DATA';
-}
-
-// ===== Initialize Controls =====
-function initializeControls() {
-    // Play/Pause
-    document.getElementById('playPauseBtn').addEventListener('click', togglePlayPause);
-
-    // Navigation
-    document.getElementById('prevBtn').addEventListener('click', () => {
-        prevGame();
-        if (isPlaying) {
-            stopSlideshow();
-            startSlideshow();
-        }
-    });
-
-    document.getElementById('nextBtn').addEventListener('click', () => {
-        nextGame();
-        if (isPlaying) {
-            stopSlideshow();
-            startSlideshow();
-        }
-    });
-
-    // Fullscreen
-    document.getElementById('fullscreenBtn').addEventListener('click', function() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen();
-            this.innerHTML = '<i class="fas fa-compress"></i>';
-        } else {
-            document.exitFullscreen();
-            this.innerHTML = '<i class="fas fa-expand"></i>';
-        }
-    });
-
-    // Settings Panel Toggle
-    document.getElementById('settingsToggle').addEventListener('click', function() {
-        document.getElementById('settingsPanel').classList.toggle('active');
-    });
-
-    // Slide Duration Control
-    const slideDuration = document.getElementById('slideDuration');
-    const durationValue = document.getElementById('durationValue');
-
-    slideDuration.addEventListener('input', function() {
-        config.slideDuration = this.value * 1000;
-        durationValue.textContent = this.value + 's';
-        if (isPlaying) {
-            stopSlideshow();
-            startSlideshow();
-        }
-    });
-
-    // Refresh Data Button
-    document.getElementById('refreshData').addEventListener('click', function() {
-        this.innerHTML = '<i class="fas fa-sync fa-spin"></i> Refreshing...';
-        loadAllData().then(() => {
-            this.innerHTML = '<i class="fas fa-sync"></i> Refresh Data';
+// ===== Team Calculations =====
+function calculateTeamScores() {
+    const teamData = {};
+    gamesData.forEach(game => {
+        game.participants.forEach(p => {
+            if (!p.team) return;
+            const key = p.team.toLowerCase().trim();
+            if (!teamData[key]) teamData[key] = { teamName: p.team, totalRanks: 0, gamesPlayed: 0, members: new Set() };
+            teamData[key].totalRanks += p.rank;
+            teamData[key].gamesPlayed++;
+            teamData[key].members.add(p.name.toLowerCase().trim());
         });
     });
 
-    // Keyboard controls
+    teamRankings = Object.values(teamData)
+        .map(t => ({ teamName: t.teamName, avgRankSum: parseFloat((t.totalRanks / t.members.size).toFixed(1)), memberCount: t.members.size, rank: 0 }))
+        .sort((a, b) => a.avgRankSum - b.avgRankSum);
+    teamRankings.forEach((t, idx) => { t.rank = idx + 1; });
+}
+
+function getOverallIndividualRankings() {
+    const pd = {};
+    gamesData.forEach(game => {
+        game.participants.forEach(p => {
+            const key = p.name.toLowerCase().trim();
+            if (!pd[key]) pd[key] = { name: p.name, photo: p.photo, team: p.team, totalRanks: 0, gamesPlayed: 0 };
+            pd[key].totalRanks += p.rank;
+            pd[key].gamesPlayed++;
+        });
+    });
+    return Object.values(pd)
+        .map(p => ({ ...p, avgRank: parseFloat((p.totalRanks / p.gamesPlayed).toFixed(1)) }))
+        .sort((a, b) => a.avgRank - b.avgRank);
+}
+
+function getTeamToppers() {
+    const ps = {};
+    gamesData.forEach(game => {
+        game.participants.forEach(p => {
+            if (!p.team) return;
+            const key = p.name.toLowerCase().trim();
+            if (!ps[key]) ps[key] = { name: p.name, team: p.team, photo: p.photo, totalRanks: 0, gamesPlayed: 0 };
+            ps[key].totalRanks += p.rank;
+            ps[key].gamesPlayed++;
+        });
+    });
+
+    const groups = {};
+    Object.values(ps).forEach(p => {
+        const key = p.team.toLowerCase().trim();
+        if (!groups[key]) groups[key] = { teamName: p.team, members: [] };
+        groups[key].members.push({ name: p.name, photo: p.photo, avgRank: parseFloat((p.totalRanks / p.gamesPlayed).toFixed(1)) });
+    });
+
+    return Object.values(groups)
+        .map(t => { t.members.sort((a, b) => a.avgRank - b.avgRank); t.members = t.members.slice(0, config.individualRankCount); return t; })
+        .sort((a, b) => (a.members[0]?.avgRank || 999) - (b.members[0]?.avgRank || 999));
+}
+
+// ===== Build Slide List =====
+function buildSlideList() {
+    allSlides = [];
+
+    if (config.showTopperPerGameOverall) {
+        gamesData.forEach(game => {
+            const top = game.participants.slice(0, config.individualRankCount);
+            if (top.length > 0) allSlides.push({ type: 'game', title: game.gameName.toUpperCase(), participants: top, game });
+        });
+    }
+
+    if (config.showTopperPerTeamPerGame) {
+        const teams = {};
+        gamesData.forEach(g => g.participants.forEach(p => { if (p.team) teams[p.team.toLowerCase().trim()] = p.team; }));
+        Object.values(teams).forEach(teamName => {
+            const key = teamName.toLowerCase().trim();
+            gamesData.forEach(game => {
+                const members = game.participants.filter(p => p.team && p.team.toLowerCase().trim() === key).slice(0, config.individualRankCount);
+                if (members.length > 0) {
+                    allSlides.push({ type: 'teamGame', title: `${teamName} — ${game.gameName}`.toUpperCase(), participants: members.map((p, i) => ({ ...p, rank: i + 1 })), game });
+                }
+            });
+        });
+    }
+
+    if (config.showOverallToppers) {
+        const overall = getOverallIndividualRankings().slice(0, config.individualRankCount);
+        if (overall.length > 0) allSlides.push({ type: 'overall', title: `OVERALL TOP ${config.individualRankCount}`, participants: overall.map((p, i) => ({ ...p, rank: i + 1 })) });
+    }
+
+    if (config.showToppersPerTeam) {
+        getTeamToppers().forEach(team => {
+            if (team.members.length > 0) allSlides.push({ type: 'teamToppers', title: `${team.teamName} — TOP PLAYERS`.toUpperCase(), participants: team.members.map((m, i) => ({ ...m, rank: i + 1 })) });
+        });
+    }
+
+    if (config.showTeamRanks && teamRankings.length > 0) {
+        allSlides.push({ type: 'teamRanks', title: 'TEAM RANKINGS', teams: teamRankings.slice(0, config.teamRankCount) });
+    }
+}
+
+// ===== Render =====
+function renderCurrentSlide() {
+    if (allSlides.length === 0) {
+        document.getElementById('gameName').textContent = 'NO DATA';
+        document.getElementById('participantsRow').innerHTML = '<p style="color:#fff">No data for selected settings.</p>';
+        return;
+    }
+
+    const slide = allSlides[currentSlideIndex];
+    const gameNameEl = document.getElementById('gameName');
+    const participantsRow = document.getElementById('participantsRow');
+
+    gameNameEl.textContent = slide.title;
+    gameNameEl.style.opacity = 0;
+    setTimeout(() => { gameNameEl.style.transition = 'opacity 0.5s ease'; gameNameEl.style.opacity = 1; }, 50);
+
+    if (slide.type === 'teamRanks') {
+        participantsRow.innerHTML = slide.teams.map(t => `
+            <div class="participant-card">
+                <div class="participant-photo">
+                    <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(t.teamName)}&background=6B46C1&color=fff&size=200" alt="${t.teamName}">
+                </div>
+                <div class="participant-name">${t.teamName}</div>
+                <div class="participant-score">#${t.rank} | ${t.memberCount} member${t.memberCount !== 1 ? 's' : ''}</div>
+            </div>
+        `).join('');
+        return;
+    }
+
+    participantsRow.innerHTML = slide.participants.map(p => {
+        const photo = p.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200`;
+        let scoreHtml = '';
+        if (slide.type === 'game' || slide.type === 'teamGame') {
+            scoreHtml = `<div class="participant-score">${formatScoreForDisplay(p, slide.game)}</div>`;
+        }
+        return `
+            <div class="participant-card">
+                <div class="participant-photo">
+                    <img src="${photo}" alt="${p.name}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
+                </div>
+                <div class="participant-name">${p.name}</div>
+                ${scoreHtml}
+            </div>
+        `;
+    }).join('');
+}
+
+// ===== Load All =====
+async function loadAllData() {
+    try {
+        await loadGamesList();
+        await loadParticipants();
+        await loadGameData();
+        buildSlideList();
+        showLoading(false);
+        if (allSlides.length > 0) {
+            currentSlideIndex = 0;
+            renderCurrentSlide();
+            if (isPlaying) { stopSlideshow(); startSlideshow(); }
+        } else {
+            document.getElementById('gameName').textContent = 'NO DATA AVAILABLE';
+            document.getElementById('participantsRow').innerHTML = '';
+        }
+    } catch (error) {
+        console.error('Error loading data:', error);
+        showLoading(false);
+        document.getElementById('gameName').textContent = 'ERROR LOADING DATA';
+    }
+}
+
+// ===== Slideshow =====
+function startSlideshow() { if (isPlaying && allSlides.length > 1) slideInterval = setInterval(nextSlide, config.slideDuration); }
+function stopSlideshow() { clearInterval(slideInterval); }
+function nextSlide() { if (allSlides.length === 0) return; currentSlideIndex = (currentSlideIndex + 1) % allSlides.length; renderCurrentSlide(); }
+function prevSlide() { if (allSlides.length === 0) return; currentSlideIndex = (currentSlideIndex - 1 + allSlides.length) % allSlides.length; renderCurrentSlide(); }
+function togglePlayPause() {
+    isPlaying = !isPlaying;
+    document.getElementById('playPauseBtn').innerHTML = isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+    if (isPlaying) startSlideshow(); else stopSlideshow();
+}
+
+function showLoading(show) { const el = document.getElementById('loadingState'); if (el) el.classList.toggle('show', show); }
+
+// ===== Controls =====
+function initializeControls() {
+    document.getElementById('playPauseBtn').addEventListener('click', togglePlayPause);
+    document.getElementById('prevBtn').addEventListener('click', () => { prevSlide(); if (isPlaying) { stopSlideshow(); startSlideshow(); } });
+    document.getElementById('nextBtn').addEventListener('click', () => { nextSlide(); if (isPlaying) { stopSlideshow(); startSlideshow(); } });
+    document.getElementById('fullscreenBtn').addEventListener('click', function() {
+        if (!document.fullscreenElement) { document.documentElement.requestFullscreen(); this.innerHTML = '<i class="fas fa-compress"></i>'; }
+        else { document.exitFullscreen(); this.innerHTML = '<i class="fas fa-expand"></i>'; }
+    });
+    document.getElementById('settingsToggle').addEventListener('click', () => document.getElementById('settingsPanel').classList.toggle('active'));
+
+    const slideDuration = document.getElementById('slideDuration');
+    const durationValue = document.getElementById('durationValue');
+    slideDuration.value = config.slideDuration / 1000;
+    durationValue.textContent = (config.slideDuration / 1000) + 's';
+    slideDuration.addEventListener('input', function() {
+        config.slideDuration = this.value * 1000;
+        durationValue.textContent = this.value + 's';
+        saveSettings();
+        if (isPlaying) { stopSlideshow(); startSlideshow(); }
+    });
+
+    document.querySelectorAll('.display-toggle').forEach(toggle => {
+        const key = toggle.dataset.config;
+        if (key && config[key] !== undefined) toggle.checked = config[key];
+        toggle.addEventListener('change', function() {
+            config[this.dataset.config] = this.checked;
+            saveSettings();
+            buildSlideList();
+            currentSlideIndex = 0;
+            renderCurrentSlide();
+            if (isPlaying) { stopSlideshow(); startSlideshow(); }
+        });
+    });
+
+    document.querySelectorAll('.rank-count').forEach(input => {
+        const key = input.dataset.config;
+        if (key && config[key] !== undefined) input.value = config[key];
+        input.addEventListener('change', function() {
+            config[this.dataset.config] = parseInt(this.value) || 1;
+            saveSettings();
+            buildSlideList();
+            currentSlideIndex = 0;
+            renderCurrentSlide();
+            if (isPlaying) { stopSlideshow(); startSlideshow(); }
+        });
+    });
+
+    document.getElementById('refreshData').addEventListener('click', function() {
+        this.innerHTML = '<i class="fas fa-sync fa-spin"></i> Refreshing...';
+        loadAllData().then(() => { this.innerHTML = '<i class="fas fa-sync"></i> Refresh Data'; });
+    });
+
     document.addEventListener('keydown', function(e) {
         switch(e.key) {
-            case 'ArrowLeft':
-                prevGame();
-                if (isPlaying) { stopSlideshow(); startSlideshow(); }
-                break;
-            case 'ArrowRight':
-                nextGame();
-                if (isPlaying) { stopSlideshow(); startSlideshow(); }
-                break;
-            case ' ':
-                e.preventDefault();
-                togglePlayPause();
-                break;
-            case 'f':
-                document.getElementById('fullscreenBtn').click();
-                break;
+            case 'ArrowLeft': prevSlide(); if (isPlaying) { stopSlideshow(); startSlideshow(); } break;
+            case 'ArrowRight': nextSlide(); if (isPlaying) { stopSlideshow(); startSlideshow(); } break;
+            case ' ': e.preventDefault(); togglePlayPause(); break;
+            case 'f': document.getElementById('fullscreenBtn').click(); break;
         }
     });
 }
 
-// Export for external use
-window.GAMAZEScores = {
-    loadAllData,
-    config
-};
+window.GAMAZEScores = { loadAllData, config };
