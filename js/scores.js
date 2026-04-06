@@ -127,12 +127,14 @@ async function loadGamesList() {
     config.gameSheets = [];
 
     if (data.rows.length > 0) {
+        // Columns: Name, Description, ScoringMethod, MaxPoints
         data.rows.forEach(row => {
             const gameName = row[0];
             if (gameName && gameName.trim()) {
                 const scoringMethod = (row[2] || 'points').toString().toLowerCase().trim();
                 const sortOrder = (scoringMethod === 'stopwatch' || scoringMethod === 'timerace') ? 'asc' : 'desc';
-                config.gameSheets.push({ name: gameName.trim(), sortOrder, scoringMethod });
+                const maxPoints = parseFloat(row[3]) || 100;
+                config.gameSheets.push({ name: gameName.trim(), sortOrder, scoringMethod, maxPoints });
             }
         });
     }
@@ -149,7 +151,9 @@ async function loadGameData() {
         const scoreIdx = findColumnIndex(data.headers, ['Score', 'Points', 'PointsScored']);
         const timeIdx = findColumnIndex(data.headers, ['TimeTaken'], -1);
         const pointsIdx = findColumnIndex(data.headers, ['PointsScored'], -1);
+        const npIdx = findColumnIndex(data.headers, ['NormalizedPoints'], -1);
         const isTimerAndPoints = gameConfig.scoringMethod === 'timerandpoints' && timeIdx >= 0 && pointsIdx >= 0;
+        const maxPoints = gameConfig.maxPoints;
 
         const participants = data.rows
             .map(row => {
@@ -162,21 +166,31 @@ async function loadGameData() {
                 const rawScore = row[scoreIdx];
                 const rawTime = timeIdx >= 0 ? row[timeIdx] : null;
                 const rawPoints = pointsIdx >= 0 ? row[pointsIdx] : null;
-                const points = rawPoints !== null ? (parseFloat(rawPoints) || 0) : parseScoreNumeric(rawScore);
-                const time = rawTime !== null ? parseTimeToSeconds(rawTime) : parseTimeFromScore(rawScore);
 
-                return { name, points, time, rawScore, rawTime, photo, team, isTimerAndPoints };
+                // Use NormalizedPoints from sheet if available, otherwise calculate
+                let normalizedPoints;
+                if (npIdx >= 0 && row[npIdx] !== undefined && row[npIdx] !== '') {
+                    normalizedPoints = parseFloat(row[npIdx]) || 0;
+                } else {
+                    // Fallback: calculate normalized points
+                    if (isTimerAndPoints) {
+                        const pts = rawPoints !== null ? (parseFloat(rawPoints) || 0) : 0;
+                        normalizedPoints = Math.max(0, Math.round((pts / maxPoints) * 100));
+                    } else if (gameConfig.sortOrder === 'asc') {
+                        const time = rawTime !== null ? parseTimeToSeconds(rawTime) : parseTimeFromScore(rawScore);
+                        normalizedPoints = Math.max(0, Math.round(((maxPoints - time) / maxPoints) * 100));
+                    } else {
+                        const pts = parseScoreNumeric(rawScore);
+                        normalizedPoints = Math.max(0, Math.round((pts / maxPoints) * 100));
+                    }
+                }
+
+                return { name, normalizedPoints, rawScore, photo, team };
             })
             .filter(p => p.name);
 
-        if (isTimerAndPoints) {
-            participants.sort((a, b) => b.points !== a.points ? b.points - a.points : a.time - b.time);
-        } else if (gameConfig.sortOrder === 'asc') {
-            participants.sort((a, b) => a.time - b.time);
-        } else {
-            participants.sort((a, b) => b.points - a.points);
-        }
-
+        // Sort by normalizedPoints descending (highest = best for all games)
+        participants.sort((a, b) => b.normalizedPoints - a.normalizedPoints);
         participants.forEach((p, idx) => { p.rank = idx + 1; });
 
         if (participants.length > 0) {
@@ -223,18 +237,8 @@ function parseTimeFromScore(rawScore) {
     return 0;
 }
 
-function formatScoreForDisplay(p, game) {
-    if (p.isTimerAndPoints) {
-        const mins = Math.floor(p.time / 60);
-        const secs = p.time % 60;
-        return `Points: ${p.points} | Time: ${mins}:${String(secs).padStart(2, '0')}`;
-    }
-    if (game.sortOrder === 'asc') {
-        const mins = Math.floor(p.time / 60);
-        const secs = p.time % 60;
-        return `Time: ${mins}:${String(secs).padStart(2, '0')}`;
-    }
-    return `Points: ${p.points}`;
+function formatScoreForDisplay(p) {
+    return `${p.normalizedPoints} pts`;
 }
 
 // ===== Column Helper =====
@@ -256,16 +260,15 @@ function calculateTeamScores() {
         game.participants.forEach(p => {
             if (!p.team) return;
             const key = p.team.toLowerCase().trim();
-            if (!teamData[key]) teamData[key] = { teamName: p.team, totalRanks: 0, gamesPlayed: 0, members: new Set() };
-            teamData[key].totalRanks += p.rank;
-            teamData[key].gamesPlayed++;
+            if (!teamData[key]) teamData[key] = { teamName: p.team, totalPoints: 0, members: new Set() };
+            teamData[key].totalPoints += p.normalizedPoints;
             teamData[key].members.add(p.name.toLowerCase().trim());
         });
     });
 
     teamRankings = Object.values(teamData)
-        .map(t => ({ teamName: t.teamName, avgRankSum: parseFloat((t.totalRanks / t.members.size).toFixed(1)), memberCount: t.members.size, rank: 0 }))
-        .sort((a, b) => a.avgRankSum - b.avgRankSum);
+        .map(t => ({ teamName: t.teamName, totalPoints: t.totalPoints, memberCount: t.members.size, rank: 0 }))
+        .sort((a, b) => b.totalPoints - a.totalPoints); // Highest total points = best
     teamRankings.forEach((t, idx) => { t.rank = idx + 1; });
 }
 
@@ -274,14 +277,12 @@ function getOverallIndividualRankings() {
     gamesData.forEach(game => {
         game.participants.forEach(p => {
             const key = p.name.toLowerCase().trim();
-            if (!pd[key]) pd[key] = { name: p.name, photo: p.photo, team: p.team, totalRanks: 0, gamesPlayed: 0 };
-            pd[key].totalRanks += p.rank;
-            pd[key].gamesPlayed++;
+            if (!pd[key]) pd[key] = { name: p.name, photo: p.photo, team: p.team, totalPoints: 0 };
+            pd[key].totalPoints += p.normalizedPoints;
         });
     });
     return Object.values(pd)
-        .map(p => ({ ...p, avgRank: parseFloat((p.totalRanks / p.gamesPlayed).toFixed(1)) }))
-        .sort((a, b) => a.avgRank - b.avgRank);
+        .sort((a, b) => b.totalPoints - a.totalPoints); // Highest total = best
 }
 
 function getTeamToppers() {
@@ -290,9 +291,8 @@ function getTeamToppers() {
         game.participants.forEach(p => {
             if (!p.team) return;
             const key = p.name.toLowerCase().trim();
-            if (!ps[key]) ps[key] = { name: p.name, team: p.team, photo: p.photo, totalRanks: 0, gamesPlayed: 0 };
-            ps[key].totalRanks += p.rank;
-            ps[key].gamesPlayed++;
+            if (!ps[key]) ps[key] = { name: p.name, team: p.team, photo: p.photo, totalPoints: 0 };
+            ps[key].totalPoints += p.normalizedPoints;
         });
     });
 
@@ -300,12 +300,12 @@ function getTeamToppers() {
     Object.values(ps).forEach(p => {
         const key = p.team.toLowerCase().trim();
         if (!groups[key]) groups[key] = { teamName: p.team, members: [] };
-        groups[key].members.push({ name: p.name, photo: p.photo, avgRank: parseFloat((p.totalRanks / p.gamesPlayed).toFixed(1)) });
+        groups[key].members.push({ name: p.name, photo: p.photo, totalPoints: p.totalPoints });
     });
 
     return Object.values(groups)
-        .map(t => { t.members.sort((a, b) => a.avgRank - b.avgRank); t.members = t.members.slice(0, config.individualRankCount); return t; })
-        .sort((a, b) => (a.members[0]?.avgRank || 999) - (b.members[0]?.avgRank || 999));
+        .map(t => { t.members.sort((a, b) => b.totalPoints - a.totalPoints); t.members = t.members.slice(0, config.individualRankCount); return t; })
+        .sort((a, b) => (b.members[0]?.totalPoints || 0) - (a.members[0]?.totalPoints || 0));
 }
 
 // ===== Build Slide List =====
@@ -372,7 +372,7 @@ function renderCurrentSlide() {
                     <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(t.teamName)}&background=6B46C1&color=fff&size=200" alt="${t.teamName}">
                 </div>
                 <div class="participant-name">${t.teamName}</div>
-                <div class="participant-score">#${t.rank} | ${t.memberCount} member${t.memberCount !== 1 ? 's' : ''}</div>
+                <div class="participant-score">${t.totalPoints} pts</div>
             </div>
         `).join('');
         return;
@@ -380,17 +380,14 @@ function renderCurrentSlide() {
 
     participantsRow.innerHTML = slide.participants.map(p => {
         const photo = p.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200`;
-        let scoreHtml = '';
-        if (slide.type === 'game' || slide.type === 'teamGame') {
-            scoreHtml = `<div class="participant-score">${formatScoreForDisplay(p, slide.game)}</div>`;
-        }
+        const pts = p.normalizedPoints !== undefined ? p.normalizedPoints : (p.totalPoints || 0);
         return `
             <div class="participant-card">
                 <div class="participant-photo">
                     <img src="${photo}" alt="${p.name}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
                 </div>
                 <div class="participant-name">${p.name}</div>
-                ${scoreHtml}
+                <div class="participant-score">${pts} pts</div>
             </div>
         `;
     }).join('');
