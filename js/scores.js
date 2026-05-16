@@ -58,6 +58,9 @@ function loadSettings() {
             Object.keys(settings).forEach(key => {
                 if (config[key] !== undefined) config[key] = settings[key];
             });
+            // Guard against stale/invalid persisted values that can hide all slides.
+            config.teamRankCount = Math.max(1, parseInt(config.teamRankCount, 10) || 1);
+            config.individualRankCount = Math.max(1, parseInt(config.individualRankCount, 10) || 1);
         }
     } catch (e) {
         console.warn('Failed to load settings:', e);
@@ -185,7 +188,7 @@ async function loadGameData() {
                     }
                 }
 
-                return { name, normalizedPoints, rawScore, photo, team };
+                return { name, normalizedPoints, rawScore, rawTime, rawPoints, photo, team };
             })
             .filter(p => p.name);
 
@@ -347,6 +350,14 @@ function buildSlideList() {
     if (config.showTeamRanks && teamRankings.length > 0) {
         allSlides.push({ type: 'teamRanks', title: 'TEAM RANKINGS', teams: teamRankings.slice(0, config.teamRankCount) });
     }
+
+    // Fallback: if data exists but selected filters produce zero slides, show per-game toppers.
+    if (allSlides.length === 0 && gamesData.length > 0) {
+        gamesData.forEach(game => {
+            const top = game.participants.slice(0, config.individualRankCount);
+            if (top.length > 0) allSlides.push({ type: 'game', title: game.gameName.toUpperCase(), participants: top, game });
+        });
+    }
 }
 
 // ===== Render =====
@@ -380,14 +391,18 @@ function renderCurrentSlide() {
 
     participantsRow.innerHTML = slide.participants.map(p => {
         const photo = p.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200`;
-        const pts = p.normalizedPoints !== undefined ? p.normalizedPoints : (p.totalPoints || 0);
+        const pts = p.rawPoints !== undefined && p.rawPoints !== null && p.rawPoints !== ''
+            ? p.rawPoints
+            : (p.normalizedPoints !== undefined ? p.normalizedPoints : (p.totalPoints || 0));
+        const hasTimeTaken = p.rawTime !== undefined && p.rawTime !== null && String(p.rawTime).trim() !== '';
         return `
             <div class="participant-card">
                 <div class="participant-photo">
                     <img src="${photo}" alt="${p.name}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=1a237e&color=fff&size=200'">
                 </div>
                 <div class="participant-name">${p.name}</div>
-                <div class="participant-score">${pts} pts</div>
+                <div class="participant-score">Points: ${pts}</div>
+                ${hasTimeTaken ? `<div class="participant-score">Time: ${p.rawTime}</div>` : ''}
             </div>
         `;
     }).join('');
